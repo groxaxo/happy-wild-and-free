@@ -80,3 +80,33 @@ export const VoiceAssistantResponseSchema = z.object({
 });
 
 export type VoiceAssistantResponse = z.infer<typeof VoiceAssistantResponseSchema>;
+
+export const VoiceSpeechProviderSchema = z.enum(['xai', 'chatterbox_multilingual']);
+
+export type VoiceSpeechProvider = z.infer<typeof VoiceSpeechProviderSchema>;
+
+export const VoiceAsrProviderSchema = z.enum(['browser', 'local']);
+
+export type VoiceAsrProvider = z.infer<typeof VoiceAsrProviderSchema>;
+
+export const VoiceSpeechRequestSchema = z.object({
+    input: z.string().min(1),
+    provider: VoiceSpeechProviderSchema.optional(),
+    language: z.string().nullable().optional(),
+});
+
+export type VoiceSpeechRequest = z.infer<typeof VoiceSpeechRequestSchema>;
+
+export const VoiceTranscriptionRequestSchema = z.object({
+    audioBase64: z.string().min(1),
+    mimeType: z.string().optional(),
+    language: z.string().nullable().optional(),
+});
+
+export type VoiceTranscriptionRequest = z.infer<typeof VoiceTranscriptionRequestSchema>;
+
+export const VoiceTranscriptionResponseSchema = z.object({
+    text: z.string(),
+});
+
+export type VoiceTranscriptionResponse = z.infer<typeof VoiceTranscriptionResponseSchema>;

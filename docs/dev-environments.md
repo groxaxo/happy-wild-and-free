@@ -22,6 +22,13 @@ Each environment injects its own:
 Each fresh environment also gets a copied lightweight fixture project from
 `environments/lab-rat-todo-project/` at `environments/data/envs/<name>/project`.
 
+Fresh environments enable local web voice by default. The generated `env.sh`
+points the narrator LLM at the AWQ-compatible proxy on
+`http://100.85.200.51:12434/v1`, Chatterbox multilingual speech at
+`http://100.85.200.51:8020/v1`, and local ASR at
+`http://100.85.200.51:5092/v1`. xAI remains available as a fallback provider
+when `XAI_API_KEY` is exported by the shell.
+
 Current limitation: the lab-rat project is copied as plain files only. It does
 not include git history yet, so provider tests that depend on realistic repo
 history still need a later fixture upgrade.

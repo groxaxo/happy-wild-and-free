@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { VoiceAsrProviderSchema, VoiceSpeechProviderSchema } from '@slopus/happy-wire';
 
 //
 // Schema
@@ -9,6 +10,8 @@ export const LocalSettingsSchema = z.object({
     debugMode: z.boolean().describe('Enable debug logging'),
     devModeEnabled: z.boolean().describe('Enable developer menu in settings'),
     voiceUpsellOverride: z.enum(['control', 'show-paywall-before-first-voice-chat', 'voice-onboarding-and-upsell']).nullable().describe('Developer-only local override for the voice-upsell PostHog flag'),
+    voiceTtsProvider: VoiceSpeechProviderSchema.describe('Local text-to-speech provider for web voice playback'),
+    voiceAsrProvider: VoiceAsrProviderSchema.describe('Local speech-to-text provider for web voice input'),
     commandPaletteEnabled: z.boolean().describe('Enable CMD+K command palette (web only)'),
     themePreference: z.enum(['light', 'dark', 'adaptive']).describe('Theme preference: light, dark, or adaptive (follows system)'),
     markdownCopyV2: z.boolean().describe('Replace native paragraph selection with long-press modal for full markdown copy'),
@@ -36,6 +39,8 @@ export const localSettingsDefaults: LocalSettings = {
     debugMode: false,
     devModeEnabled: false,
     voiceUpsellOverride: null,
+    voiceTtsProvider: 'chatterbox_multilingual',
+    voiceAsrProvider: 'local',
     commandPaletteEnabled: false,
     themePreference: 'adaptive',
     markdownCopyV2: false,

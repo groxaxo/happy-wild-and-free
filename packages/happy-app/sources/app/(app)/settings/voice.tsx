@@ -19,6 +19,17 @@ import { trackPaywallButtonClicked } from '@/track';
 import { getVoiceExperimentStatus, getVoiceUpsellVariantLabel } from '@/realtime/voiceExperiment';
 import { getVoiceLocalCounters, resetVoiceLocalCounters } from '@/sync/persistence';
 import { config } from '@/config';
+import type { VoiceAsrProvider, VoiceSpeechProvider } from '@slopus/happy-wire';
+
+const VOICE_TTS_PROVIDER_LABELS: Record<VoiceSpeechProvider, string> = {
+    xai: 'xAI Grok',
+    chatterbox_multilingual: 'Chatterbox Multilingual',
+};
+
+const VOICE_ASR_PROVIDER_LABELS: Record<VoiceAsrProvider, string> = {
+    browser: 'Browser Speech Recognition',
+    local: 'Local ASR',
+};
 
 function formatVoiceTime(totalSeconds: number): string {
     const mins = Math.floor(totalSeconds / 60);
@@ -33,6 +44,8 @@ export default React.memo(function VoiceSettingsScreen() {
     const [voiceCustomAgentId, setVoiceCustomAgentId] = useSettingMutable('voiceCustomAgentId');
     const [voiceBypassToken, setVoiceBypassToken] = useSettingMutable('voiceBypassToken');
     const [voiceUpsellOverride, setVoiceUpsellOverride] = useLocalSettingMutable('voiceUpsellOverride');
+    const [voiceTtsProvider, setVoiceTtsProvider] = useLocalSettingMutable('voiceTtsProvider');
+    const [voiceAsrProvider, setVoiceAsrProvider] = useLocalSettingMutable('voiceAsrProvider');
     const experiments = useSetting('experiments');
     const devModeEnabled = __DEV__ || useLocalSetting('devModeEnabled');
     const localVoiceEnabled = config.localVoiceEnabled ?? false;
@@ -92,6 +105,30 @@ export default React.memo(function VoiceSettingsScreen() {
             ],
         );
     }, [setVoiceUpsellOverride]);
+
+    const handleVoiceTtsProvider = React.useCallback(() => {
+        Modal.alert(
+            'Speech Provider',
+            'Choose the text-to-speech provider used for local web voice playback.',
+            [
+                { text: VOICE_TTS_PROVIDER_LABELS.xai, onPress: () => setVoiceTtsProvider('xai') },
+                { text: VOICE_TTS_PROVIDER_LABELS.chatterbox_multilingual, onPress: () => setVoiceTtsProvider('chatterbox_multilingual') },
+                { text: t('common.cancel'), style: 'cancel' },
+            ],
+        );
+    }, [setVoiceTtsProvider]);
+
+    const handleVoiceAsrProvider = React.useCallback(() => {
+        Modal.alert(
+            'Input Provider',
+            'Choose the speech-to-text provider used for local web voice input.',
+            [
+                { text: VOICE_ASR_PROVIDER_LABELS.local, onPress: () => setVoiceAsrProvider('local') },
+                { text: VOICE_ASR_PROVIDER_LABELS.browser, onPress: () => setVoiceAsrProvider('browser') },
+                { text: t('common.cancel'), style: 'cancel' },
+            ],
+        );
+    }, [setVoiceAsrProvider]);
 
     const handleResetVoiceCounters = React.useCallback(async () => {
         const confirmed = await Modal.confirm(
@@ -221,6 +258,28 @@ export default React.memo(function VoiceSettingsScreen() {
                         subtitleLines={0}
                         icon={<Ionicons name="refresh-outline" size={29} color="#FF9500" />}
                         onPress={handleResetVoiceCounters}
+                    />
+                </ItemGroup>
+            )}
+
+            {localVoiceEnabled && (
+                <ItemGroup
+                    title="Local Speech"
+                    footer="Provider selection applies to local web voice input and playback."
+                >
+                    <Item
+                        title="Input Provider"
+                        subtitle="Choose the local speech-to-text backend"
+                        detail={VOICE_ASR_PROVIDER_LABELS[voiceAsrProvider]}
+                        icon={<Ionicons name="mic-outline" size={29} color="#007AFF" />}
+                        onPress={handleVoiceAsrProvider}
+                    />
+                    <Item
+                        title="Speech Provider"
+                        subtitle="Choose the local text-to-speech backend"
+                        detail={VOICE_TTS_PROVIDER_LABELS[voiceTtsProvider]}
+                        icon={<Ionicons name="volume-high-outline" size={29} color="#34C759" />}
+                        onPress={handleVoiceTtsProvider}
                     />
                 </ItemGroup>
             )}

@@ -9,6 +9,7 @@ SessionView.tsx            UI — mic button, triggers voice start/stop
 RealtimeSession.ts         Lifecycle — start/stop, token fetch, session routing state
 RealtimeVoiceSession.tsx   Native ElevenLabs bridge (useConversation hook)
 RealtimeVoiceSession.web.tsx  Web ElevenLabs bridge (same interface)
+LocalRealtimeVoiceSession.web.tsx  Web local bridge (browser/local ASR, local narrator LLM, pluggable TTS)
 voiceHooks.ts              Context delivery — formats and routes app events to voice agent
 contextFormatters.ts       Text formatters for session context, messages, permissions
 realtimeClientTools.ts     Tool implementations the voice agent can invoke
@@ -144,6 +145,35 @@ The voice agent can invoke these client tools (defined in `realtimeClientTools.t
 - **processPermissionRequest** — allows or denies a pending permission request on the current session.
 
 Both read the target session from `getCurrentRealtimeSessionId()`.
+
+## Local Web Voice
+
+When `EXPO_PUBLIC_LOCAL_VOICE_ENABLED=true`, web voice uses
+`LocalRealtimeVoiceSession.web.tsx` instead of the ElevenLabs realtime bridge.
+The app still routes turns through the same session focus and client-tool
+logic, but the audio/text providers are split across Happy server proxy routes:
+
+| Step | Route | Default local backend |
+|------|-------|-----------------------|
+| User speech to text | `POST /v1/voice/assistant/transcriptions` | `LOCAL_ASR_BASE_URL` (`http://100.85.200.51:5092/v1`) |
+| Narration text | `POST /v1/voice/assistant/chat` | `LOCAL_LLM_BASE_URL` (`http://100.85.200.51:12434/v1`, `qwen36-35b-awq-instruct`) |
+| Narration speech | `POST /v1/voice/assistant/speech` | Chatterbox multilingual (`http://100.85.200.51:8020/v1`) |
+
+Local voice settings live under Settings → Voice → Local Speech:
+
+- **Input Provider** chooses browser speech recognition or local ASR.
+- **Speech Provider** chooses xAI Grok TTS or Chatterbox multilingual TTS.
+
+The server defaults are configured with:
+
+- `LOCAL_VOICE_LLM_PROVIDER=local`
+- `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL`
+- `LOCAL_VOICE_TTS_PROVIDER`
+- `CHATTERBOX_MULTILINGUAL_TTS_BASE_URL`, `CHATTERBOX_MULTILINGUAL_TTS_MODEL`, `CHATTERBOX_MULTILINGUAL_TTS_VOICE`, `CHATTERBOX_MULTILINGUAL_TTS_LANGUAGE`, `CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH`
+- `LOCAL_ASR_BASE_URL`, `LOCAL_ASR_MODEL`
+
+`XAI_API_KEY` is only required when the narrator or speech provider is switched
+back to xAI.
 
 ## Lifecycle
 

@@ -6,11 +6,13 @@ import { storage } from '@/sync/storage';
 import {
     fetchLocalVoiceAssistantResponse,
     synthesizeLocalVoiceSpeech,
+    transcribeLocalVoiceAudio,
 } from '@/sync/apiVoice';
 import { getCurrentRealtimeSessionId, registerVoiceSession } from './RealtimeSession';
 import { realtimeClientTools } from './realtimeClientTools';
 import type { VoiceSession, VoiceSessionConfig } from './types';
 import { extractPermissionDecision, findPendingPermissionRequest } from './localVoiceRouting';
+import type { VoiceAsrProvider } from '@slopus/happy-wire';
 
 interface SpeechRecognitionAlternativeLike {
     transcript: string;
@@ -57,6 +59,7 @@ declare global {
     interface Window {
         SpeechRecognition?: SpeechRecognitionConstructorLike;
         webkitSpeechRecognition?: SpeechRecognitionConstructorLike;
+        webkitAudioContext?: typeof AudioContext;
     }
 }
 
@@ -71,6 +74,17 @@ const LOCAL_NARRATION_SYSTEM_PROMPT = [
     '- If the update is a permission request, clearly ask whether to allow or deny it.',
     '- If the update is a forwarding acknowledgement, briefly confirm it was sent.',
 ].join('\n');
+
+const LOCAL_ASR_MIME_TYPES = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+];
+const LOCAL_ASR_TIMESLICE_MS = 250;
+const LOCAL_ASR_PREROLL_MS = 750;
+const LOCAL_ASR_SILENCE_MS = 900;
+const LOCAL_ASR_MIN_UTTERANCE_MS = 350;
+const LOCAL_ASR_RMS_THRESHOLD = 0.025;
 
 function compactText(input: string, maxLength: number): string {
     const trimmed = input.trim();
@@ -87,8 +101,31 @@ function getSpeechRecognitionConstructor(): SpeechRecognitionConstructorLike | n
     return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null;
 }
 
+function getBestLocalAsrMimeType(): string | undefined {
+    if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+        return undefined;
+    }
+
+    return LOCAL_ASR_MIME_TYPES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+}
+
+function getAudioContextConstructor(): typeof AudioContext | null {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+    return window.AudioContext ?? window.webkitAudioContext ?? null;
+}
+
+function canUseLocalAsr(): boolean {
+    return typeof navigator !== 'undefined'
+        && !!navigator.mediaDevices?.getUserMedia
+        && typeof MediaRecorder !== 'undefined'
+        && !!getAudioContextConstructor();
+}
+
 class LocalRealtimeVoiceSessionImpl implements VoiceSession {
     private recognition: SpeechRecognitionLike | null = null;
+    private inputProvider: VoiceAsrProvider = 'browser';
     private sessionActive = false;
     private restartRecognition = false;
     private startingRecognition = false;
@@ -99,13 +136,28 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
     private focusedSessionId: string | null = null;
     private initialContext: string | null = null;
     private contextualUpdates: string[] = [];
+    private mediaStream: MediaStream | null = null;
+    private mediaRecorder: MediaRecorder | null = null;
+    private audioContext: AudioContext | null = null;
+    private analyser: AnalyserNode | null = null;
+    private vadFrame: number | null = null;
+    private localAsrActive = false;
+    private localAsrSpeechActive = false;
+    private localAsrSilenceStartedAt: number | null = null;
+    private localAsrSpeechStartedAt = 0;
+    private localAsrChunks: Blob[] = [];
+    private localAsrPreRoll: Array<{ blob: Blob; at: number }> = [];
 
     async startSession(config: VoiceSessionConfig): Promise<string | null> {
-        if (!getSpeechRecognitionConstructor()) {
+        await this.endSession();
+
+        this.inputProvider = storage.getState().localSettings.voiceAsrProvider;
+        if (this.inputProvider === 'browser' && !getSpeechRecognitionConstructor()) {
             throw new Error('Speech recognition is not available in this browser');
         }
-
-        await this.endSession();
+        if (this.inputProvider === 'local' && !canUseLocalAsr()) {
+            throw new Error('Local speech recognition is not available in this browser');
+        }
 
         this.sessionActive = true;
         this.restartRecognition = true;
@@ -114,7 +166,11 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
         this.initialContext = config.initialContext?.trim() ? compactText(config.initialContext, 4000) : null;
         this.contextualUpdates = [];
 
-        this.ensureRecognition();
+        if (this.inputProvider === 'local') {
+            await this.ensureLocalAsr();
+        } else {
+            this.ensureRecognition();
+        }
         storage.getState().setRealtimeStatus('connected');
         storage.getState().setRealtimeMode('idle', true);
 
@@ -138,7 +194,8 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
         this.initialContext = null;
         this.contextualUpdates = [];
 
-        this.stopRecognition();
+        this.stopBrowserRecognition();
+        this.stopLocalAsr(true);
 
         if (this.activeAudio) {
             this.activeAudio.pause();
@@ -183,7 +240,7 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
         const recognition = new SpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true;
-        recognition.lang = 'en-US';
+        recognition.lang = storage.getState().settings.voiceAssistantLanguage ?? 'en-US';
 
         recognition.onspeechstart = () => {
             if (!this.processingTurn && !this.activeAudio) {
@@ -253,6 +310,14 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
         if (!this.sessionActive || !this.restartRecognition || this.processingTurn || this.activeAudio) {
             return;
         }
+        if (this.inputProvider === 'local') {
+            if (delayMs > 0) {
+                window.setTimeout(() => this.startLocalAsr(), delayMs);
+                return;
+            }
+            this.startLocalAsr();
+            return;
+        }
         if (delayMs > 0) {
             window.setTimeout(() => this.startRecognition(), delayMs);
             return;
@@ -281,6 +346,14 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
     }
 
     private stopRecognition(): void {
+        if (this.inputProvider === 'local') {
+            this.stopLocalAsr(false);
+            return;
+        }
+        this.stopBrowserRecognition();
+    }
+
+    private stopBrowserRecognition(): void {
         this.startingRecognition = false;
         if (!this.recognition) {
             return;
@@ -294,6 +367,204 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
                 // Ignore shutdown races from the browser speech engine.
             }
         }
+    }
+
+    private async ensureLocalAsr(): Promise<void> {
+        if (this.mediaRecorder && this.analyser) {
+            return;
+        }
+
+        const AudioContextConstructor = getAudioContextConstructor();
+        if (!AudioContextConstructor || !navigator.mediaDevices?.getUserMedia) {
+            throw new Error('Local speech recognition is not available in this browser');
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            },
+        });
+        const audioContext = new AudioContextConstructor();
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.2;
+
+        const source = audioContext.createMediaStreamSource(stream);
+        source.connect(analyser);
+
+        const mimeType = getBestLocalAsrMimeType();
+        const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        mediaRecorder.ondataavailable = (event) => this.handleLocalAsrData(event.data);
+        mediaRecorder.onerror = (event) => {
+            console.warn('Local ASR recorder error:', event);
+            storage.getState().setRealtimeStatus('error');
+            storage.getState().setRealtimeMode('idle', true);
+        };
+
+        this.mediaStream = stream;
+        this.audioContext = audioContext;
+        this.analyser = analyser;
+        this.mediaRecorder = mediaRecorder;
+    }
+
+    private startLocalAsr(): void {
+        if (this.inputProvider !== 'local' || !this.sessionActive || !this.restartRecognition || this.processingTurn || this.activeAudio) {
+            return;
+        }
+        if (!this.mediaRecorder || !this.analyser || this.localAsrActive) {
+            return;
+        }
+
+        void this.audioContext?.resume().catch((error) => {
+            console.warn('Failed to resume local ASR audio context:', error);
+        });
+
+        this.localAsrActive = true;
+        this.localAsrSpeechActive = false;
+        this.localAsrSilenceStartedAt = null;
+        this.localAsrSpeechStartedAt = 0;
+        this.localAsrChunks = [];
+        this.localAsrPreRoll = [];
+
+        try {
+            if (this.mediaRecorder.state === 'inactive') {
+                this.mediaRecorder.start(LOCAL_ASR_TIMESLICE_MS);
+            }
+        } catch (error) {
+            this.localAsrActive = false;
+            console.warn('Failed to start local ASR recorder:', error);
+            storage.getState().setRealtimeStatus('error');
+            return;
+        }
+
+        this.pollLocalAsrVad();
+    }
+
+    private stopLocalAsr(release: boolean): void {
+        this.localAsrActive = false;
+        this.localAsrSpeechActive = false;
+        this.localAsrSilenceStartedAt = null;
+        this.localAsrSpeechStartedAt = 0;
+        this.localAsrChunks = [];
+        this.localAsrPreRoll = [];
+
+        if (this.vadFrame !== null) {
+            window.cancelAnimationFrame(this.vadFrame);
+            this.vadFrame = null;
+        }
+
+        if (this.mediaRecorder?.state === 'recording') {
+            try {
+                this.mediaRecorder.stop();
+            } catch {
+                // Ignore shutdown races from MediaRecorder.
+            }
+        }
+
+        if (!release) {
+            return;
+        }
+
+        if (this.mediaRecorder) {
+            this.mediaRecorder.ondataavailable = null;
+            this.mediaRecorder.onerror = null;
+            this.mediaRecorder = null;
+        }
+        if (this.mediaStream) {
+            for (const track of this.mediaStream.getTracks()) {
+                track.stop();
+            }
+            this.mediaStream = null;
+        }
+        if (this.audioContext) {
+            void this.audioContext.close().catch(() => undefined);
+            this.audioContext = null;
+        }
+        this.analyser = null;
+    }
+
+    private handleLocalAsrData(blob: Blob): void {
+        if (!this.localAsrActive || blob.size === 0) {
+            return;
+        }
+
+        if (this.localAsrSpeechActive) {
+            this.localAsrChunks.push(blob);
+            return;
+        }
+
+        const now = Date.now();
+        this.localAsrPreRoll.push({ blob, at: now });
+        this.localAsrPreRoll = this.localAsrPreRoll.filter((entry) => now - entry.at <= LOCAL_ASR_PREROLL_MS);
+    }
+
+    private pollLocalAsrVad(): void {
+        if (!this.localAsrActive || !this.sessionActive || this.processingTurn || this.activeAudio || !this.analyser) {
+            return;
+        }
+
+        const samples = new Uint8Array(this.analyser.fftSize);
+        this.analyser.getByteTimeDomainData(samples);
+
+        let sumSquares = 0;
+        for (const sample of samples) {
+            const normalized = (sample - 128) / 128;
+            sumSquares += normalized * normalized;
+        }
+        const rms = Math.sqrt(sumSquares / samples.length);
+        const now = Date.now();
+
+        if (rms >= LOCAL_ASR_RMS_THRESHOLD) {
+            if (!this.localAsrSpeechActive) {
+                this.startLocalAsrSpeech(now);
+            }
+            this.localAsrSilenceStartedAt = null;
+            storage.getState().setRealtimeMode('user-speaking', true);
+        } else if (this.localAsrSpeechActive) {
+            this.localAsrSilenceStartedAt ??= now;
+            if (now - this.localAsrSilenceStartedAt >= LOCAL_ASR_SILENCE_MS) {
+                this.finishLocalAsrSpeech(now);
+            } else {
+                storage.getState().setRealtimeMode('user-speaking', true);
+            }
+        } else {
+            storage.getState().setRealtimeMode('idle');
+        }
+
+        if (this.localAsrActive) {
+            this.vadFrame = window.requestAnimationFrame(() => this.pollLocalAsrVad());
+        }
+    }
+
+    private startLocalAsrSpeech(now: number): void {
+        this.localAsrSpeechActive = true;
+        this.localAsrSilenceStartedAt = null;
+        this.localAsrSpeechStartedAt = now;
+        this.localAsrChunks = this.localAsrPreRoll.map((entry) => entry.blob);
+        this.localAsrPreRoll = [];
+    }
+
+    private finishLocalAsrSpeech(now: number): void {
+        const durationMs = now - this.localAsrSpeechStartedAt;
+        const chunks = this.localAsrChunks;
+        const mimeType = this.mediaRecorder?.mimeType || getBestLocalAsrMimeType() || 'audio/webm';
+
+        this.localAsrSpeechActive = false;
+        this.localAsrSilenceStartedAt = null;
+        this.localAsrSpeechStartedAt = 0;
+        this.localAsrChunks = [];
+        this.localAsrPreRoll = [];
+        storage.getState().setRealtimeMode('idle');
+
+        if (durationMs < LOCAL_ASR_MIN_UTTERANCE_MS || chunks.length === 0) {
+            return;
+        }
+
+        const audioBlob = new Blob(chunks, { type: mimeType });
+        this.stopLocalAsr(false);
+        this.enqueueWork(() => this.runLocalAsrTurn(audioBlob));
     }
 
     private enqueueWork(work: () => Promise<void>): void {
@@ -331,6 +602,24 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
             .catch((error) => {
                 console.error('Failed to queue local voice work:', error);
             });
+    }
+
+    private async runLocalAsrTurn(audioBlob: Blob): Promise<void> {
+        const credentials = await TokenStorage.getCredentials();
+        if (!credentials) {
+            throw new Error('Missing auth credentials for local voice transcription');
+        }
+
+        const { voiceAssistantLanguage } = storage.getState().settings;
+        const response = await transcribeLocalVoiceAudio(credentials, audioBlob, {
+            language: voiceAssistantLanguage,
+        });
+        const transcript = response.text.trim();
+        if (!transcript) {
+            return;
+        }
+
+        await this.runUserTurn(transcript);
     }
 
     private async runUserTurn(input: string): Promise<void> {
@@ -447,7 +736,12 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
 
         storage.getState().setRealtimeMode('agent-speaking', true);
 
-        const blob = await synthesizeLocalVoiceSpeech(credentials, trimmed);
+        const { voiceAssistantLanguage } = storage.getState().settings;
+        const { voiceTtsProvider } = storage.getState().localSettings;
+        const blob = await synthesizeLocalVoiceSpeech(credentials, trimmed, {
+            provider: voiceTtsProvider,
+            language: voiceAssistantLanguage,
+        });
         if (!this.sessionActive) {
             return;
         }

@@ -740,6 +740,7 @@ function commandRun(service: string, serviceArgs: string[] = []) {
 function buildEnvVars(envDir: string, serverPort: number, expoPort: number): Record<string, string> {
     const devAuth = readDevAuth(envDir);
     const projectDir = path.join(envDir, "project");
+    const localVoiceProxyHost = "100.85.200.51";
 
     return {
         // Server
@@ -750,11 +751,24 @@ function buildEnvVars(envDir: string, serverPort: number, expoPort: number): Rec
         PGLITE_DIR: path.join(envDir, "server", "pglite"),
         DATABASE_URL: "",
         METRICS_ENABLED: "false",
+        LOCAL_VOICE_LLM_PROVIDER: "local",
+        LOCAL_LLM_BASE_URL: `http://${localVoiceProxyHost}:12434/v1`,
+        LOCAL_LLM_MODEL: "qwen36-35b-awq-instruct",
+        LOCAL_VOICE_TTS_PROVIDER: "chatterbox_multilingual",
+        LOCAL_TTS_PROVIDER: "chatterbox_multilingual",
         XAI_API_BASE_URL: "https://api.x.ai/v1",
         XAI_RESPONSES_MODEL: "grok-4.20-0309-non-reasoning",
         XAI_RESPONSES_MAX_OUTPUT_TOKENS: "1000000",
         XAI_TTS_VOICE: "eve",
         XAI_TTS_LANGUAGE: "auto",
+        CHATTERBOX_MULTILINGUAL_TTS_BASE_URL: `http://${localVoiceProxyHost}:8020/v1`,
+        CHATTERBOX_MULTILINGUAL_TTS_MODEL: "tts-1-es",
+        CHATTERBOX_MULTILINGUAL_TTS_VOICE: "latina",
+        CHATTERBOX_MULTILINGUAL_TTS_LANGUAGE: "es",
+        CHATTERBOX_MULTILINGUAL_TTS_RESPONSE_FORMAT: "mp3",
+        CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH: "/home/op/voxcpm2-server/reference_audio/newlatina_ref.wav",
+        LOCAL_ASR_BASE_URL: `http://${localVoiceProxyHost}:5092/v1`,
+        LOCAL_ASR_MODEL: "parakeet-tdt-0.6b-v3",
 
         // App (Expo)
         EXPO_PUBLIC_SERVER_URL: `http://localhost:${serverPort}`,
@@ -795,12 +809,25 @@ function buildEnvSh(name: string, envDir: string, serverPort: number, expoPort: 
     lines.push(`export PGLITE_DIR="${vars.PGLITE_DIR}"`);
     lines.push(`export DATABASE_URL=""`);
     lines.push(`export METRICS_ENABLED=false`);
+    lines.push(`export LOCAL_VOICE_LLM_PROVIDER="${vars.LOCAL_VOICE_LLM_PROVIDER}"`);
+    lines.push(`export LOCAL_LLM_BASE_URL="${vars.LOCAL_LLM_BASE_URL}"`);
+    lines.push(`export LOCAL_LLM_MODEL="${vars.LOCAL_LLM_MODEL}"`);
+    lines.push(`export LOCAL_VOICE_TTS_PROVIDER="${vars.LOCAL_VOICE_TTS_PROVIDER}"`);
+    lines.push(`export LOCAL_TTS_PROVIDER="${vars.LOCAL_TTS_PROVIDER}"`);
     lines.push(`# export XAI_API_KEY="your-xai-api-key"`);
     lines.push(`export XAI_API_BASE_URL="${vars.XAI_API_BASE_URL}"`);
     lines.push(`export XAI_RESPONSES_MODEL="${vars.XAI_RESPONSES_MODEL}"`);
     lines.push(`export XAI_RESPONSES_MAX_OUTPUT_TOKENS="${vars.XAI_RESPONSES_MAX_OUTPUT_TOKENS}"`);
     lines.push(`export XAI_TTS_VOICE="${vars.XAI_TTS_VOICE}"`);
     lines.push(`export XAI_TTS_LANGUAGE="${vars.XAI_TTS_LANGUAGE}"`);
+    lines.push(`export CHATTERBOX_MULTILINGUAL_TTS_BASE_URL="${vars.CHATTERBOX_MULTILINGUAL_TTS_BASE_URL}"`);
+    lines.push(`export CHATTERBOX_MULTILINGUAL_TTS_MODEL="${vars.CHATTERBOX_MULTILINGUAL_TTS_MODEL}"`);
+    lines.push(`export CHATTERBOX_MULTILINGUAL_TTS_VOICE="${vars.CHATTERBOX_MULTILINGUAL_TTS_VOICE}"`);
+    lines.push(`export CHATTERBOX_MULTILINGUAL_TTS_LANGUAGE="${vars.CHATTERBOX_MULTILINGUAL_TTS_LANGUAGE}"`);
+    lines.push(`export CHATTERBOX_MULTILINGUAL_TTS_RESPONSE_FORMAT="${vars.CHATTERBOX_MULTILINGUAL_TTS_RESPONSE_FORMAT}"`);
+    lines.push(`export CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH="${vars.CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH}"`);
+    lines.push(`export LOCAL_ASR_BASE_URL="${vars.LOCAL_ASR_BASE_URL}"`);
+    lines.push(`export LOCAL_ASR_MODEL="${vars.LOCAL_ASR_MODEL}"`);
     lines.push("");
 
     lines.push("# App (Expo)");
