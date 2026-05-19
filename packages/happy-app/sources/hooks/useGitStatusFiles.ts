@@ -24,7 +24,7 @@ export function useGitStatusFiles(sessionId: string) {
             const result = await getGitStatusFiles(sessionId);
             storage.getState().applyGitStatusFiles(pathKey, result);
         } catch (error) {
-            console.error('Failed to load git status files:', error);
+            console.debug('Failed to load git status files:', error);
         } finally {
             setIsFetching(false);
         }

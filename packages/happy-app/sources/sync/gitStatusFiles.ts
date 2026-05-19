@@ -67,7 +67,7 @@ export async function getGitStatusFiles(sessionId: string): Promise<GitStatusFil
         return parseGitStatusFilesV2(statusOutput, diffOutput);
 
     } catch (error) {
-        console.error('Error fetching git status files for session', sessionId, ':', error);
+        console.debug('Error fetching git status files for session', sessionId, ':', error);
         return null;
     }
 }

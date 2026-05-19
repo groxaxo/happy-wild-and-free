@@ -130,6 +130,10 @@ export class GitStatusSync {
             if (!session?.metadata?.path) {
                 return;
             }
+            if (session.presence !== 'online') {
+                storage.getState().applyGitStatus(projectKey, null);
+                return;
+            }
 
             // First check if we're in a git repository
             const gitCheckResult = await sessionBash(sessionId, {
@@ -153,7 +157,7 @@ export class GitStatusSync {
             });
 
             if (!statusResult.success) {
-                console.error('Failed to get git status:', statusResult.error);
+                console.debug('Failed to get git status:', statusResult.error || statusResult.stderr || 'Unknown git status RPC error');
                 return;
             }
 
@@ -182,7 +186,7 @@ export class GitStatusSync {
             storage.getState().applyGitStatus(projectKey, gitStatus);
 
         } catch (error) {
-            console.error('Error fetching git status for session', sessionId, ':', error);
+            console.debug('Error fetching git status for session', sessionId, ':', error);
             // Don't apply error state, just skip this update
         }
     }

@@ -13,20 +13,17 @@ const VOICE_FREE_LIMIT_SECONDS = 1200;  // 20 minutes free tier per 30 days (~$0
 const VOICE_HARD_LIMIT_SECONDS = 18000; // 5 hours absolute cap per 30 days (even with subscription)
 const VOICE_MAX_CONVERSATIONS = 100;    // Max conversations trackable per 30 days (ElevenLabs page_size limit)
 const ELEVEN_LABS_API = "https://api.elevenlabs.io/v1/convai";
-// Tailscale host for local voice proxies.
-// GPU split on that host:
-// - LLM proxy on :12434 reserves the RTX 3090s.
-// - Chatterbox TTS proxy on :8020 is pinned to the RTX 3060 at GPU index 2.
-// - ASR proxy on :5092 should stay off the RTX 3090s; the current parakeet proxy is CPU-backed.
-const LOCAL_VOICE_PROXY_HOST = "100.85.200.51";
-const DEFAULT_LOCAL_LLM_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:12434/v1`;
-const DEFAULT_LOCAL_LLM_MODEL = "qwen36-35b-awq-instruct";
-const DEFAULT_LOCAL_TTS_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:8020/v1`;
-const DEFAULT_LOCAL_TTS_MODEL = "tts-1-es";
-const DEFAULT_LOCAL_TTS_VOICE = "latina";
-const DEFAULT_LOCAL_TTS_AUDIO_PROMPT_PATH = "/home/op/voxcpm2-server/reference_audio/newlatina_ref.wav";
-const DEFAULT_LOCAL_ASR_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:5092/v1`;
-const LOCAL_LLM_BUSY_RETRIES = 6;
+const DEFAULT_XAI_API_BASE_URL = "https://api.x.ai/v1";
+const DEFAULT_XAI_RESPONSES_MODEL = "grok-4.20-0309-non-reasoning";
+const DEFAULT_XAI_RESPONSES_MAX_OUTPUT_TOKENS = 1000000;
+const DEFAULT_XAI_TTS_VOICE = "eve";
+const DEFAULT_XAI_TTS_LANGUAGE = "auto";
+const XAI_TTS_MAX_INPUT_CHARS = 15000;
+const XAI_REQUEST_RETRIES = 3;
+
+type VoiceAssistantRequest = z.infer<typeof VoiceAssistantRequestSchema>;
+type VoiceAssistantResponse = z.infer<typeof VoiceAssistantResponseSchema>;
+type VoiceAssistantMessage = VoiceAssistantRequest["messages"][number];
 
 function deriveElevenUserId(happyUserId: string): string {
     const hmac = crypto.createHmac("sha256", process.env.HANDY_MASTER_SECRET!);
@@ -101,62 +98,89 @@ async function hasActiveSubscription(userId: string): Promise<boolean> {
     }
 }
 
-function getLocalLlmBaseUrl(): string {
-    return (process.env.LOCAL_LLM_BASE_URL || DEFAULT_LOCAL_LLM_BASE_URL).replace(/\/$/, "");
+function getXaiApiKey(): string {
+    const apiKey = process.env.XAI_API_KEY?.trim();
+    if (!apiKey) {
+        throw new Error("XAI_API_KEY not configured");
+    }
+    return apiKey;
 }
 
-function getLocalLlmModel(): string {
-    return process.env.LOCAL_LLM_MODEL || DEFAULT_LOCAL_LLM_MODEL;
+function getXaiApiBaseUrl(): string {
+    return (process.env.XAI_API_BASE_URL || DEFAULT_XAI_API_BASE_URL).replace(/\/$/, "");
 }
 
-function getLocalTtsBaseUrl(): string {
-    return (process.env.LOCAL_TTS_BASE_URL || DEFAULT_LOCAL_TTS_BASE_URL).replace(/\/$/, "");
+function getXaiResponsesModel(): string {
+    return process.env.XAI_RESPONSES_MODEL || DEFAULT_XAI_RESPONSES_MODEL;
 }
 
-function getLocalTtsModel(): string {
-    return process.env.LOCAL_TTS_MODEL || DEFAULT_LOCAL_TTS_MODEL;
+function getXaiResponsesMaxOutputTokens(): number {
+    const raw = process.env.XAI_RESPONSES_MAX_OUTPUT_TOKENS;
+    if (!raw) {
+        return DEFAULT_XAI_RESPONSES_MAX_OUTPUT_TOKENS;
+    }
+
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return DEFAULT_XAI_RESPONSES_MAX_OUTPUT_TOKENS;
+    }
+
+    return Math.floor(parsed);
 }
 
-function getLocalTtsVoice(): string {
-    return process.env.LOCAL_TTS_VOICE || DEFAULT_LOCAL_TTS_VOICE;
+function getXaiTtsVoice(): string {
+    return process.env.XAI_TTS_VOICE || DEFAULT_XAI_TTS_VOICE;
 }
 
-function getLocalTtsAudioPromptPath(): string {
-    return process.env.LOCAL_TTS_AUDIO_PROMPT_PATH || DEFAULT_LOCAL_TTS_AUDIO_PROMPT_PATH;
+function getXaiTtsLanguage(): string {
+    return process.env.XAI_TTS_LANGUAGE || DEFAULT_XAI_TTS_LANGUAGE;
 }
 
-function getLocalAsrBaseUrl(): string {
-    return (process.env.LOCAL_ASR_BASE_URL || DEFAULT_LOCAL_ASR_BASE_URL).replace(/\/$/, "");
+function getXaiJsonHeaders(): Record<string, string> {
+    return {
+        "Authorization": `Bearer ${getXaiApiKey()}`,
+        "Content-Type": "application/json",
+    };
 }
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function toOpenAiMessage(message: z.infer<typeof VoiceAssistantRequestSchema>["messages"][number]) {
-    if (message.role === "assistant") {
-        return {
-            role: "assistant",
-            content: message.content,
-            ...(message.toolCalls?.length ? {
-                tool_calls: message.toolCalls.map((toolCall: { id: string; name: string; arguments: string }) => ({
-                    id: toolCall.id,
-                    type: "function",
-                    function: {
-                        name: toolCall.name,
-                        arguments: toolCall.arguments,
-                    },
-                })),
-            } : {}),
-        };
+function isTransientXaiStatus(status: number): boolean {
+    return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+async function fetchXaiWithRetries(path: string, init: RequestInit): Promise<Response> {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < XAI_REQUEST_RETRIES; attempt++) {
+        try {
+            const response = await fetch(`${getXaiApiBaseUrl()}${path}`, init);
+            if (!isTransientXaiStatus(response.status) || attempt === XAI_REQUEST_RETRIES - 1) {
+                return response;
+            }
+
+            await response.arrayBuffer().catch(() => undefined);
+        } catch (error) {
+            lastError = error;
+            if (attempt === XAI_REQUEST_RETRIES - 1) {
+                throw error;
+            }
+        }
+
+        await sleep(500 * (2 ** attempt));
     }
 
+    throw lastError instanceof Error ? lastError : new Error("xAI request failed");
+}
+
+function toXaiResponsesInputMessage(message: VoiceAssistantMessage): { role: "system" | "user" | "assistant"; content: string } {
     if (message.role === "tool") {
+        const label = message.name || message.toolCallId || "tool";
         return {
-            role: "tool",
-            content: message.content,
-            tool_call_id: message.toolCallId,
-            name: message.name,
+            role: "user",
+            content: `Tool result from ${label}:\n${message.content}`,
         };
     }
 
@@ -166,76 +190,224 @@ function toOpenAiMessage(message: z.infer<typeof VoiceAssistantRequestSchema>["m
     };
 }
 
-async function requestLocalAssistantCompletion(
-    body: z.infer<typeof VoiceAssistantRequestSchema>,
-): Promise<z.infer<typeof VoiceAssistantResponseSchema>> {
-    const llmUrl = `${getLocalLlmBaseUrl()}/chat/completions`;
-    const payload = {
-        model: getLocalLlmModel(),
-        messages: body.messages.map(toOpenAiMessage),
-        tools: body.tools,
-        tool_choice: "auto",
-        parallel_tool_calls: false,
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function extractXaiOutputText(raw: unknown): string {
+    if (!isRecord(raw)) {
+        return "";
+    }
+
+    if (typeof raw.output_text === "string") {
+        return raw.output_text;
+    }
+
+    const output = raw.output;
+    if (!Array.isArray(output)) {
+        return "";
+    }
+
+    const parts: string[] = [];
+    for (const item of output) {
+        if (!isRecord(item) || !Array.isArray(item.content)) {
+            continue;
+        }
+
+        for (const content of item.content) {
+            if (!isRecord(content)) {
+                continue;
+            }
+            if (content.type === "output_text" && typeof content.text === "string") {
+                parts.push(content.text);
+            }
+        }
+    }
+
+    return parts.join("");
+}
+
+function extractXaiErrorMessage(raw: unknown): string | null {
+    if (!isRecord(raw)) {
+        return null;
+    }
+
+    if (typeof raw.message === "string") {
+        return raw.message;
+    }
+
+    if (isRecord(raw.error)) {
+        return extractXaiErrorMessage(raw.error);
+    }
+
+    return null;
+}
+
+function processXaiResponsesSseFrame(
+    frame: string,
+    state: { text: string; completedText: string | null },
+): void {
+    const lines = frame.split(/\r?\n/);
+    const eventType = lines
+        .find((line) => line.startsWith("event:"))
+        ?.slice("event:".length)
+        .trim();
+    const data = lines
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice("data:".length).trimStart())
+        .join("\n")
+        .trim();
+
+    if (!data || data === "[DONE]") {
+        return;
+    }
+
+    const parsed = JSON.parse(data) as unknown;
+    if (!isRecord(parsed)) {
+        return;
+    }
+
+    const type = typeof parsed.type === "string" ? parsed.type : eventType;
+    if (type === "error" || parsed.error) {
+        throw new Error(extractXaiErrorMessage(parsed) || "xAI responses stream failed");
+    }
+
+    if (
+        (type === "response.output_text.delta" || type === "response.text.delta")
+        && typeof parsed.delta === "string"
+    ) {
+        state.text += parsed.delta;
+        return;
+    }
+
+    if (
+        (type === "response.output_text.done" || type === "response.text.done")
+        && typeof parsed.text === "string"
+    ) {
+        state.completedText = parsed.text;
+        return;
+    }
+
+    if (type === "response.completed" || type === "response.done") {
+        const response = isRecord(parsed.response) ? parsed.response : parsed;
+        const extracted = extractXaiOutputText(response);
+        if (extracted) {
+            state.completedText = extracted;
+        }
+    }
+}
+
+async function readXaiResponsesStream(response: Response): Promise<string> {
+    if (!response.body) {
+        throw new Error("xAI responses stream did not include a body");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const state = { text: "", completedText: null as string | null };
+    let buffer = "";
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (value) {
+            buffer += decoder.decode(value, { stream: !done });
+            const frames = buffer.split(/\r?\n\r?\n/);
+            buffer = frames.pop() ?? "";
+            for (const frame of frames) {
+                processXaiResponsesSseFrame(frame, state);
+            }
+        }
+
+        if (done) {
+            buffer += decoder.decode();
+            break;
+        }
+    }
+
+    if (buffer.trim()) {
+        processXaiResponsesSseFrame(buffer, state);
+    }
+
+    return state.completedText || state.text;
+}
+
+async function readXaiResponsesText(response: Response): Promise<string> {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("text/event-stream")) {
+        return readXaiResponsesStream(response);
+    }
+
+    return extractXaiOutputText(await response.json());
+}
+
+async function requestLocalAssistantCompletion(body: VoiceAssistantRequest): Promise<VoiceAssistantResponse> {
+    const tools = body.tools ?? [];
+    const payload: Record<string, unknown> = {
+        model: getXaiResponsesModel(),
+        max_output_tokens: getXaiResponsesMaxOutputTokens(),
+        stream: true,
+        store: false,
+        input: body.messages.map(toXaiResponsesInputMessage),
         temperature: 0.1,
     };
 
-    let lastErrorText = "Local model request failed";
-    let lastStatus = 502;
-
-    for (let attempt = 0; attempt < LOCAL_LLM_BUSY_RETRIES; attempt++) {
-        const response = await fetch(llmUrl, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(payload),
-        });
-
-        if (response.ok) {
-            const raw = await response.json() as {
-                choices?: Array<{
-                    message?: {
-                        content?: string | null;
-                        tool_calls?: Array<{
-                            id?: string;
-                            function?: {
-                                name?: string;
-                                arguments?: string;
-                            };
-                        }>;
-                    };
-                }>;
-            };
-            const message = raw.choices?.[0]?.message;
-            return VoiceAssistantResponseSchema.parse({
-                message: {
-                    role: "assistant",
-                    content: message?.content ?? "",
-                    toolCalls: (message?.tool_calls ?? []).map((toolCall: {
-                        id?: string;
-                        function?: {
-                            name?: string;
-                            arguments?: string;
-                        };
-                    }) => ({
-                        id: toolCall.id ?? "",
-                        name: toolCall.function?.name ?? "",
-                        arguments: toolCall.function?.arguments ?? "{}",
-                    })),
-                },
-            });
-        }
-
-        lastStatus = response.status;
-        lastErrorText = await response.text();
-        if (response.status !== 409 || attempt === LOCAL_LLM_BUSY_RETRIES - 1) {
-            break;
-        }
-
-        await sleep(1000 * (attempt + 1));
+    if (tools.length > 0) {
+        payload.tools = tools;
+        payload.tool_choice = "auto";
+        payload.parallel_tool_calls = false;
     }
 
-    throw new Error(`[${lastStatus}] ${lastErrorText}`);
+    const response = await fetchXaiWithRetries("/responses", {
+        method: "POST",
+        headers: getXaiJsonHeaders(),
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        throw new Error(`[${response.status}] ${await response.text()}`);
+    }
+
+    const content = (await readXaiResponsesText(response)).trim();
+    if (!content) {
+        throw new Error("xAI returned an empty narration response");
+    }
+
+    return VoiceAssistantResponseSchema.parse({
+        message: {
+            role: "assistant",
+            content,
+            toolCalls: [],
+        },
+    });
+}
+
+async function requestXaiSpeech(input: string): Promise<{ audioBuffer: Buffer; contentType: string }> {
+    const text = input.trim();
+    if (!text) {
+        throw new Error("Speech input is empty");
+    }
+    if (text.length > XAI_TTS_MAX_INPUT_CHARS) {
+        throw new Error(`Speech input exceeds ${XAI_TTS_MAX_INPUT_CHARS} characters`);
+    }
+
+    const response = await fetchXaiWithRetries("/tts", {
+        method: "POST",
+        headers: getXaiJsonHeaders(),
+        body: JSON.stringify({
+            text,
+            voice_id: getXaiTtsVoice(),
+            language: getXaiTtsLanguage(),
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`[${response.status}] ${await response.text()}`);
+    }
+
+    return {
+        audioBuffer: Buffer.from(await response.arrayBuffer()),
+        contentType: response.headers.get("content-type") || "audio/mpeg",
+    };
 }
 
 export function voiceRoutes(app: Fastify) {
@@ -415,28 +587,8 @@ export function voiceRoutes(app: Fastify) {
         },
     }, async (request, reply) => {
         try {
-            const response = await fetch(`${getLocalTtsBaseUrl()}/audio/speech`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    model: getLocalTtsModel(),
-                    voice: getLocalTtsVoice(),
-                    audio_prompt_path: getLocalTtsAudioPromptPath(),
-                    language: "es",
-                    input: request.body.input,
-                    response_format: "mp3",
-                }),
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`[${response.status}] ${errorText}`);
-            }
-
-            const audioBuffer = Buffer.from(await response.arrayBuffer());
-            reply.header('content-type', response.headers.get('content-type') || 'audio/mpeg');
+            const { audioBuffer, contentType } = await requestXaiSpeech(request.body.input);
+            reply.header('content-type', contentType);
             return reply.send(audioBuffer);
         } catch (error) {
             log({ module: 'voice-local' }, `Local voice speech failed for user ${request.userId}: ${error}`);

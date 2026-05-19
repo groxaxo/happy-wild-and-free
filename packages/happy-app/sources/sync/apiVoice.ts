@@ -25,6 +25,25 @@ export type {
     VoiceUsageResponse,
 };
 
+async function getResponseErrorMessage(response: Response): Promise<string> {
+    try {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            const payload = await response.json() as { error?: unknown };
+            return typeof payload.error === 'string' ? payload.error : JSON.stringify(payload);
+        }
+
+        return (await response.text()).trim();
+    } catch {
+        return '';
+    }
+}
+
+async function throwRequestError(response: Response, label: string): Promise<never> {
+    const detail = await getResponseErrorMessage(response);
+    throw new Error(`${label} failed: ${response.status}${detail ? ` - ${detail}` : ''}`);
+}
+
 export async function fetchVoiceCredentials(
     credentials: AuthCredentials,
     sessionId: string
@@ -92,7 +111,7 @@ export async function fetchLocalVoiceAssistantResponse(
     });
 
     if (!response.ok) {
-        throw new Error(`Local voice chat request failed: ${response.status}`);
+        await throwRequestError(response, 'Local voice chat request');
     }
 
     return VoiceAssistantResponseSchema.parse(await response.json());
@@ -114,7 +133,7 @@ export async function synthesizeLocalVoiceSpeech(
     });
 
     if (!response.ok) {
-        throw new Error(`Local voice speech request failed: ${response.status}`);
+        await throwRequestError(response, 'Local voice speech request');
     }
 
     return response.blob();
