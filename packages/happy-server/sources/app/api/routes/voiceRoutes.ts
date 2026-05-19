@@ -19,7 +19,7 @@ const VOICE_MAX_CONVERSATIONS = 100;    // Max conversations trackable per 30 da
 const ELEVEN_LABS_API = "https://api.elevenlabs.io/v1/convai";
 const LOCAL_VOICE_PROXY_HOST = "100.85.200.51";
 const DEFAULT_LOCAL_LLM_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:12434/v1`;
-const DEFAULT_LOCAL_LLM_MODEL = "qwen36-35b-awq-instruct";
+const DEFAULT_LOCAL_LLM_MODEL = "qwen36-35b-awq-general";
 const DEFAULT_LOCAL_ASR_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:5092/v1`;
 const DEFAULT_LOCAL_ASR_MODEL = "parakeet-tdt-0.6b-v3";
 const DEFAULT_XAI_API_BASE_URL = "https://api.x.ai/v1";
@@ -37,7 +37,7 @@ const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_RESPONSE_FORMAT = "mp3";
 const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH = "/home/op/voxcpm2-server/reference_audio/newlatina_ref.wav";
 const LOCAL_LLM_BUSY_RETRIES = 6;
 const LOCAL_LLM_REQUEST_TIMEOUT_MS = 60_000;
-const LOCAL_TTS_REQUEST_TIMEOUT_MS = 120_000;
+const DEFAULT_LOCAL_TTS_REQUEST_TIMEOUT_MS = 300_000;
 const LOCAL_ASR_REQUEST_TIMEOUT_MS = 60_000;
 const LOCAL_ASR_MAX_AUDIO_BYTES = 15 * 1024 * 1024;
 const LOCAL_ASR_REQUEST_BODY_LIMIT_BYTES = Math.ceil(LOCAL_ASR_MAX_AUDIO_BYTES * 1.5);
@@ -195,6 +195,24 @@ function getXaiJsonHeaders(): Record<string, string> {
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getPositiveIntegerEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (!raw) {
+        return fallback;
+    }
+
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return fallback;
+    }
+
+    return Math.floor(parsed);
+}
+
+function getLocalTtsRequestTimeoutMs(): number {
+    return getPositiveIntegerEnv("LOCAL_TTS_REQUEST_TIMEOUT_MS", DEFAULT_LOCAL_TTS_REQUEST_TIMEOUT_MS);
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
@@ -720,7 +738,7 @@ async function requestChatterboxMultilingualSpeech(input: string, language?: str
             input: text,
             response_format: getChatterboxMultilingualTtsResponseFormat(),
         }),
-    }, LOCAL_TTS_REQUEST_TIMEOUT_MS);
+    }, getLocalTtsRequestTimeoutMs());
 
     if (!response.ok) {
         throw new Error(`[${response.status}] ${await response.text()}`);

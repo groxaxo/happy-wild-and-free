@@ -156,7 +156,7 @@ logic, but the audio/text providers are split across Happy server proxy routes:
 | Step | Route | Default local backend |
 |------|-------|-----------------------|
 | User speech to text | `POST /v1/voice/assistant/transcriptions` | `LOCAL_ASR_BASE_URL` (`http://100.85.200.51:5092/v1`) |
-| Narration text | `POST /v1/voice/assistant/chat` | `LOCAL_LLM_BASE_URL` (`http://100.85.200.51:12434/v1`, `qwen36-35b-awq-instruct`) |
+| Narration text | `POST /v1/voice/assistant/chat` | `LOCAL_LLM_BASE_URL` (`http://100.85.200.51:12434/v1`, `qwen36-35b-awq-general`) |
 | Narration speech | `POST /v1/voice/assistant/speech` | Chatterbox multilingual (`http://100.85.200.51:8020/v1`) |
 
 Local voice settings live under Settings → Voice → Local Speech:
@@ -169,6 +169,7 @@ The server defaults are configured with:
 - `LOCAL_VOICE_LLM_PROVIDER=local`
 - `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL`
 - `LOCAL_VOICE_TTS_PROVIDER`
+- `LOCAL_TTS_REQUEST_TIMEOUT_MS`
 - `CHATTERBOX_MULTILINGUAL_TTS_BASE_URL`, `CHATTERBOX_MULTILINGUAL_TTS_MODEL`, `CHATTERBOX_MULTILINGUAL_TTS_VOICE`, `CHATTERBOX_MULTILINGUAL_TTS_LANGUAGE`, `CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH`
 - `LOCAL_ASR_BASE_URL`, `LOCAL_ASR_MODEL`
 

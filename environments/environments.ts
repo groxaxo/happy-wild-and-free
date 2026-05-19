@@ -753,9 +753,10 @@ function buildEnvVars(envDir: string, serverPort: number, expoPort: number): Rec
         METRICS_ENABLED: "false",
         LOCAL_VOICE_LLM_PROVIDER: "local",
         LOCAL_LLM_BASE_URL: `http://${localVoiceProxyHost}:12434/v1`,
-        LOCAL_LLM_MODEL: "qwen36-35b-awq-instruct",
+        LOCAL_LLM_MODEL: "qwen36-35b-awq-general",
         LOCAL_VOICE_TTS_PROVIDER: "chatterbox_multilingual",
         LOCAL_TTS_PROVIDER: "chatterbox_multilingual",
+        LOCAL_TTS_REQUEST_TIMEOUT_MS: "300000",
         XAI_API_BASE_URL: "https://api.x.ai/v1",
         XAI_RESPONSES_MODEL: "grok-4.20-0309-non-reasoning",
         XAI_RESPONSES_MAX_OUTPUT_TOKENS: "1000000",
@@ -814,6 +815,7 @@ function buildEnvSh(name: string, envDir: string, serverPort: number, expoPort: 
     lines.push(`export LOCAL_LLM_MODEL="${vars.LOCAL_LLM_MODEL}"`);
     lines.push(`export LOCAL_VOICE_TTS_PROVIDER="${vars.LOCAL_VOICE_TTS_PROVIDER}"`);
     lines.push(`export LOCAL_TTS_PROVIDER="${vars.LOCAL_TTS_PROVIDER}"`);
+    lines.push(`export LOCAL_TTS_REQUEST_TIMEOUT_MS="${vars.LOCAL_TTS_REQUEST_TIMEOUT_MS}"`);
     lines.push(`# export XAI_API_KEY="your-xai-api-key"`);
     lines.push(`export XAI_API_BASE_URL="${vars.XAI_API_BASE_URL}"`);
     lines.push(`export XAI_RESPONSES_MODEL="${vars.XAI_RESPONSES_MODEL}"`);
