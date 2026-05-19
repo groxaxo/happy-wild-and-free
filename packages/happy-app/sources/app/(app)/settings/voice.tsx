@@ -18,6 +18,7 @@ import { sync } from '@/sync/sync';
 import { trackPaywallButtonClicked } from '@/track';
 import { getVoiceExperimentStatus, getVoiceUpsellVariantLabel } from '@/realtime/voiceExperiment';
 import { getVoiceLocalCounters, resetVoiceLocalCounters } from '@/sync/persistence';
+import { config } from '@/config';
 
 function formatVoiceTime(totalSeconds: number): string {
     const mins = Math.floor(totalSeconds / 60);
@@ -34,6 +35,7 @@ export default React.memo(function VoiceSettingsScreen() {
     const [voiceUpsellOverride, setVoiceUpsellOverride] = useLocalSettingMutable('voiceUpsellOverride');
     const experiments = useSetting('experiments');
     const devModeEnabled = __DEV__ || useLocalSetting('devModeEnabled');
+    const localVoiceEnabled = config.localVoiceEnabled ?? false;
 
     const hasPro = useEntitlement('pro');
 
@@ -42,12 +44,16 @@ export default React.memo(function VoiceSettingsScreen() {
     const [voiceLocalCounters, setVoiceLocalCounters] = React.useState(() => getVoiceLocalCounters());
 
     React.useEffect(() => {
+        if (localVoiceEnabled) {
+            setUsageLoading(false);
+            return;
+        }
         if (!auth.credentials) return;
         fetchVoiceUsage(auth.credentials)
             .then(setUsage)
             .catch(() => {})
             .finally(() => setUsageLoading(false));
-    }, [auth.credentials]);
+    }, [auth.credentials, localVoiceEnabled]);
 
     // Find current language or default to first option
     const currentLanguage = findLanguageByCode(voiceAssistantLanguage) || LANGUAGES[0];
@@ -145,11 +151,11 @@ export default React.memo(function VoiceSettingsScreen() {
     return (
         <ItemList style={{ paddingTop: 0 }}>
             {/* Voice Usage */}
-            {usageLoading ? (
+            {!localVoiceEnabled && usageLoading ? (
                 <View style={{ paddingVertical: 24, alignItems: 'center' }}>
                     <ActivityIndicator />
                 </View>
-            ) : usage ? (
+            ) : !localVoiceEnabled && usage ? (
                 <ItemGroup
                     title={t('settingsVoice.usageTitle')}
                     footer={t('settingsVoice.usageFooter')}

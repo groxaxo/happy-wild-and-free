@@ -34,6 +34,7 @@ import { navigateToSession } from '@/hooks/useNavigateToSession';
 import { applyVoiceUpsellOverride } from '@/realtime/voiceExperiment';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
 import { useTauriDrag } from '@/hooks/useTauriDrag';
+import { setLogServerUrl, setServerUrl } from '@/sync/serverConfig';
 
 // Configure notification handler — suppress push display when app is in foreground
 Notifications.setNotificationHandler({
@@ -202,6 +203,21 @@ function getDevWebQueryCredentials(): AuthCredentials | null {
     return { token, secret };
 }
 
+function getDevWebQueryServerConfig(): { serverUrl?: string; logServerUrl?: string } | null {
+    if (!__DEV__ || Platform.OS !== 'web' || typeof window === 'undefined') {
+        return null;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const serverUrl = params.get('server_url') ?? undefined;
+    const logServerUrl = params.get('log_server_url') ?? undefined;
+    if (!serverUrl && !logServerUrl) {
+        return null;
+    }
+
+    return { serverUrl, logServerUrl };
+}
+
 export default function RootLayout() {
     useTauriZoom();
     useTauriDrag();
@@ -238,6 +254,7 @@ export default function RootLayout() {
 
                 let credentials = await TokenStorage.getCredentials();
                 const devCredentials = getDevWebQueryCredentials() ?? getDevEnvironmentCredentials();
+                const devServerConfig = getDevWebQueryServerConfig();
 
                 if (devCredentials) {
                     const credentialsChanged = credentials?.token !== devCredentials.token
@@ -253,6 +270,13 @@ export default function RootLayout() {
                     if (Platform.OS === 'web' && typeof window !== 'undefined') {
                         window.history.replaceState({}, '', window.location.pathname);
                     }
+                }
+
+                if (devServerConfig?.serverUrl) {
+                    setServerUrl(devServerConfig.serverUrl);
+                }
+                if (devServerConfig?.logServerUrl) {
+                    setLogServerUrl(devServerConfig.logServerUrl);
                 }
 
                 if (credentials) {

@@ -15,6 +15,7 @@ import {
 } from '@/sync/persistence';
 import { buildVoiceFirstMessage, buildVoiceSystemPrompt } from './voiceSystemPrompt';
 import { getVoiceUpsellVariant } from './voiceExperiment';
+import { config } from '@/config';
 
 let voiceSession: VoiceSession | null = null;
 let voiceSessionStarted: boolean = false;
@@ -47,6 +48,47 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
     }
 
     try {
+        const credentials = await TokenStorage.getCredentials();
+        if (!credentials) {
+            storage.getState().setRealtimeStatus('disconnected');
+            Modal.alert(t('common.error'), t('errors.authenticationFailed'));
+            return null;
+        }
+
+        const hasPro = storage.getState().purchases.entitlements['pro'] ?? false;
+        const { voiceUpsellOverride, devModeEnabled } = storage.getState().localSettings;
+        const voiceUpsellVariant = getVoiceUpsellVariant({
+            override: voiceUpsellOverride,
+            overrideEnabled: __DEV__ || devModeEnabled,
+        });
+        const onboardingPromptLoadCount = getVoiceOnboardingPromptLoadCount();
+        const voiceMessageCount = getVoiceMessageCount();
+        const systemPrompt = buildVoiceSystemPrompt({
+            initialContext,
+            onboardingPromptLoadCount,
+            voiceMessageCount,
+            includePaidVoiceOnboarding: !hasPro && voiceUpsellVariant === 'voice-onboarding-and-upsell',
+        });
+        const firstMessage = buildVoiceFirstMessage({
+            hasPro,
+            onboardingPromptLoadCount,
+            includePaidVoiceOnboarding: voiceUpsellVariant === 'voice-onboarding-and-upsell',
+        });
+
+        if (config.localVoiceEnabled) {
+            currentSessionId = sessionId;
+            const startedConversationId = await voiceSession.startSession({
+                sessionId,
+                initialContext,
+                systemPrompt,
+                firstMessage,
+            });
+            currentVoiceConversationId = startedConversationId;
+            currentVoiceSessionStartedAt = Date.now();
+            voiceSessionStarted = true;
+            return currentVoiceConversationId;
+        }
+
         // Bypass Happy server token — only when user has their own custom agent
         const { voiceBypassToken, voiceCustomAgentId } = storage.getState().settings;
         if (voiceBypassToken && voiceCustomAgentId) {
@@ -61,13 +103,6 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
             currentVoiceSessionStartedAt = Date.now();
             voiceSessionStarted = true;
             return conversationId;
-        }
-
-        const credentials = await TokenStorage.getCredentials();
-        if (!credentials) {
-            storage.getState().setRealtimeStatus('disconnected');
-            Modal.alert(t('common.error'), t('errors.authenticationFailed'));
-            return null;
         }
 
         const response = await fetchVoiceCredentials(credentials, sessionId);
@@ -94,13 +129,6 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
             return null;
         }
 
-        const hasPro = storage.getState().purchases.entitlements['pro'] ?? false;
-        const { voiceUpsellOverride, devModeEnabled } = storage.getState().localSettings;
-        const voiceUpsellVariant = getVoiceUpsellVariant({
-            override: voiceUpsellOverride,
-            overrideEnabled: __DEV__ || devModeEnabled,
-        });
-
         if (
             !hasPro &&
             voiceUpsellVariant === 'show-paywall-before-first-voice-chat' &&
@@ -114,20 +142,6 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
         }
 
         currentSessionId = sessionId;
-        const onboardingPromptLoadCount = getVoiceOnboardingPromptLoadCount();
-        const voiceMessageCount = getVoiceMessageCount();
-        const systemPrompt = buildVoiceSystemPrompt({
-            initialContext,
-            onboardingPromptLoadCount,
-            voiceMessageCount,
-            includePaidVoiceOnboarding: !hasPro && voiceUpsellVariant === 'voice-onboarding-and-upsell',
-        });
-        const firstMessage = buildVoiceFirstMessage({
-            hasPro,
-            onboardingPromptLoadCount,
-            includePaidVoiceOnboarding: voiceUpsellVariant === 'voice-onboarding-and-upsell',
-        });
-
         const startedConversationId = await voiceSession.startSession({
             sessionId,
             initialContext,

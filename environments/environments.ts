@@ -450,7 +450,11 @@ export async function seedEnvironment(name: string): Promise<void> {
         ),
     );
 
-    const authenticatedWebUrl = buildAuthenticatedWebUrl(config.expoPort, token, secretBase64);
+    const authenticatedWebUrl = buildAuthenticatedWebUrl(
+        `http://localhost:${config.expoPort}`,
+        token,
+        secretBase64,
+    );
     writeEnvironmentConfig({ ...config, authenticatedWebUrl });
 
     const daemonStatePath = path.join(envDir, "cli", "home", "daemon.state.json");
@@ -736,6 +740,10 @@ function commandRun(service: string, serviceArgs: string[] = []) {
 function buildEnvVars(envDir: string, serverPort: number, expoPort: number): Record<string, string> {
     const devAuth = readDevAuth(envDir);
     const projectDir = path.join(envDir, "project");
+    // Tailscale host for local voice proxies.
+    // GPU split on that host: LLM uses the RTX 3090s, Chatterbox TTS uses
+    // the RTX 3060 at GPU index 2, and the current ASR proxy is CPU-backed.
+    const localVoiceProxyHost = "100.85.200.51";
 
     return {
         // Server
@@ -746,11 +754,19 @@ function buildEnvVars(envDir: string, serverPort: number, expoPort: number): Rec
         PGLITE_DIR: path.join(envDir, "server", "pglite"),
         DATABASE_URL: "",
         METRICS_ENABLED: "false",
+        LOCAL_LLM_BASE_URL: `http://${localVoiceProxyHost}:12434/v1`,
+        LOCAL_LLM_MODEL: "qwen36-35b-awq-instruct",
+        LOCAL_TTS_BASE_URL: `http://${localVoiceProxyHost}:8020/v1`,
+        LOCAL_TTS_MODEL: "tts-1-es",
+        LOCAL_TTS_VOICE: "latina",
+        LOCAL_TTS_AUDIO_PROMPT_PATH: "/home/op/voxcpm2-server/reference_audio/newlatina_ref.wav",
+        LOCAL_ASR_BASE_URL: `http://${localVoiceProxyHost}:5092/v1`,
 
         // App (Expo)
         EXPO_PUBLIC_SERVER_URL: `http://localhost:${serverPort}`,
         EXPO_PUBLIC_HAPPY_SERVER_URL: `http://localhost:${serverPort}`,
         EXPO_PUBLIC_LOG_SERVER_URL: "http://localhost:8787",
+        EXPO_PUBLIC_LOCAL_VOICE_ENABLED: "true",
         EXPO_PORT: String(expoPort),
 
         // CLI
@@ -785,12 +801,20 @@ function buildEnvSh(name: string, envDir: string, serverPort: number, expoPort: 
     lines.push(`export PGLITE_DIR="${vars.PGLITE_DIR}"`);
     lines.push(`export DATABASE_URL=""`);
     lines.push(`export METRICS_ENABLED=false`);
+    lines.push(`export LOCAL_LLM_BASE_URL="${vars.LOCAL_LLM_BASE_URL}"`);
+    lines.push(`export LOCAL_LLM_MODEL="${vars.LOCAL_LLM_MODEL}"`);
+    lines.push(`export LOCAL_TTS_BASE_URL="${vars.LOCAL_TTS_BASE_URL}"`);
+    lines.push(`export LOCAL_TTS_MODEL="${vars.LOCAL_TTS_MODEL}"`);
+    lines.push(`export LOCAL_TTS_VOICE="${vars.LOCAL_TTS_VOICE}"`);
+    lines.push(`export LOCAL_TTS_AUDIO_PROMPT_PATH="${vars.LOCAL_TTS_AUDIO_PROMPT_PATH}"`);
+    lines.push(`export LOCAL_ASR_BASE_URL="${vars.LOCAL_ASR_BASE_URL}"`);
     lines.push("");
 
     lines.push("# App (Expo)");
     lines.push(`export EXPO_PUBLIC_SERVER_URL="${vars.EXPO_PUBLIC_SERVER_URL}"`);
     lines.push(`export EXPO_PUBLIC_HAPPY_SERVER_URL="${vars.EXPO_PUBLIC_HAPPY_SERVER_URL}"`);
     lines.push(`export EXPO_PUBLIC_LOG_SERVER_URL="${vars.EXPO_PUBLIC_LOG_SERVER_URL}"`);
+    lines.push(`export EXPO_PUBLIC_LOCAL_VOICE_ENABLED="${vars.EXPO_PUBLIC_LOCAL_VOICE_ENABLED}"`);
     if (vars.EXPO_PUBLIC_DEV_TOKEN && vars.EXPO_PUBLIC_DEV_SECRET) {
         lines.push(`export EXPO_PUBLIC_DEV_TOKEN="${vars.EXPO_PUBLIC_DEV_TOKEN}"`);
         lines.push(`export EXPO_PUBLIC_DEV_SECRET="${vars.EXPO_PUBLIC_DEV_SECRET}"`);
@@ -842,12 +866,23 @@ function writeEnvCommands(envDir: string): void {
     }
 }
 
-function buildAuthenticatedWebUrl(expoPort: number, token: string, secret: string): string {
+function buildAuthenticatedWebUrl(
+    webBaseUrl: string,
+    token: string,
+    secret: string,
+    options?: { serverUrl?: string; logServerUrl?: string },
+): string {
     const webParams = new URLSearchParams({
         dev_token: token,
         dev_secret: Buffer.from(secret, "base64").toString("base64url"),
     });
-    return `http://localhost:${expoPort}/?${webParams}`;
+    if (options?.serverUrl) {
+        webParams.set("server_url", options.serverUrl);
+    }
+    if (options?.logServerUrl) {
+        webParams.set("log_server_url", options.logServerUrl);
+    }
+    return `${webBaseUrl.replace(/\/$/, "")}/?${webParams}`;
 }
 
 function buildCliCommand(envDir: string): string {
@@ -933,7 +968,27 @@ function commandDown(targetName?: string) {
 // Tailscale
 // ============================================================================
 
-function commandTailscale() {
+function writeCaddyfile(caddyfilePath: string, proxyPort: number, serverPort: number, expoPort: number): void {
+    fs.mkdirSync(path.dirname(caddyfilePath), { recursive: true });
+    fs.writeFileSync(
+        caddyfilePath,
+        [
+            `:${proxyPort} {`,
+            "    @api path /v1/* /v3/* /socket.io* /health* /metrics* /uploads/*",
+            "    handle @api {",
+            `        reverse_proxy 127.0.0.1:${serverPort}`,
+            "    }",
+            "",
+            "    handle {",
+            `        reverse_proxy 127.0.0.1:${expoPort}`,
+            "    }",
+            "}",
+            "",
+        ].join("\n"),
+    );
+}
+
+async function commandTailscale() {
     const currentConfig = readCurrentConfig();
     if (!currentConfig?.current) {
         console.error("No current environment. Run `pnpm env:new` first.");
@@ -953,15 +1008,47 @@ function commandTailscale() {
         process.exit(1);
     }
 
+    const envDir = getEnvironmentDir(currentConfig.current);
+    const proxyPort = await allocatePort();
+    const caddyDir = path.join(envDir, "https-proxy");
+    const caddyfilePath = path.join(caddyDir, "Caddyfile");
+    const caddyLogPath = path.join(caddyDir, "stdout.log");
+
+    const existingCaddyPid = readPidFile(envDir, "https-proxy");
+    if (existingCaddyPid !== null) {
+        if (isProcessAlive(existingCaddyPid)) {
+            killProcess(existingCaddyPid);
+        }
+        removePidFile(envDir, "https-proxy");
+    }
+
+    writeCaddyfile(caddyfilePath, proxyPort, config.serverPort, config.expoPort);
+    const caddyPid = spawnService("caddy", ["run", "--config", caddyfilePath, "--adapter", "caddyfile"], {
+        cwd: caddyDir,
+        env: process.env,
+        logFile: caddyLogPath,
+    });
+    writePidFile(envDir, "https-proxy", caddyPid);
+
+    try {
+        await waitFor(() => isPortInUse(proxyPort), 10_000, "Caddy HTTPS proxy");
+    } catch (error) {
+        killProcess(caddyPid);
+        removePidFile(envDir, "https-proxy");
+        throw error;
+    }
+
     // Reset existing funnels
     try { execSync("tailscale funnel reset", { stdio: "ignore" }); } catch {}
 
-    // Expose web app on 443 and server on 8443
+    // Expose a single HTTPS origin. Caddy routes API paths to the Happy server
+    // and all other requests to the Expo web app.
     try {
-        execSync(`tailscale funnel --bg ${config.expoPort}`, { stdio: "inherit" });
-        execSync(`tailscale funnel --bg --https=8443 ${config.serverPort}`, { stdio: "inherit" });
+        execSync(`tailscale funnel --bg ${proxyPort}`, { stdio: "inherit" });
     } catch (e: any) {
         console.error("Failed to set up Tailscale funnel:", e.message);
+        killProcess(caddyPid);
+        removePidFile(envDir, "https-proxy");
         process.exit(1);
     }
 
@@ -969,7 +1056,18 @@ function commandTailscale() {
     console.log(`Tailscale funnel active for "${currentConfig.current}":`);
     console.log("");
     console.log(`  Web:    https://${hostname}`);
-    console.log(`  Server: https://${hostname}:8443`);
+    console.log(`  Server: https://${hostname}`);
+    console.log(`  Caddy:  http://127.0.0.1:${proxyPort}`);
+    if (config.authenticatedWebUrl) {
+        const authUrl = new URL(config.authenticatedWebUrl);
+        const publicAuthUrl = buildAuthenticatedWebUrl(
+            `https://${hostname}`,
+            authUrl.searchParams.get("dev_token") ?? "",
+            Buffer.from(authUrl.searchParams.get("dev_secret") ?? "", "base64url").toString("base64"),
+            { serverUrl: `https://${hostname}` },
+        );
+        console.log(`  Auth:   ${publicAuthUrl}`);
+    }
     console.log("");
 }
 
@@ -1031,7 +1129,7 @@ async function main(): Promise<void> {
             commandDown(args[0]);
             break;
         case "tailscale":
-            commandTailscale();
+            await commandTailscale();
             break;
         default:
             console.log(`Happy Environment Manager

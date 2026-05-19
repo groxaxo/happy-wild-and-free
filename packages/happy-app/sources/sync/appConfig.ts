@@ -7,6 +7,7 @@ export interface AppConfig {
     revenueCatGoogleKey?: string;
     revenueCatStripeKey?: string;
     elevenLabsAgentId?: string;
+    localVoiceEnabled?: boolean;
     consoleLoggingDefault?: boolean;
     serverUrl?: string;
 }
@@ -87,6 +88,13 @@ export function loadAppConfig(): AppConfig {
     if (process.env.EXPO_PUBLIC_SERVER_URL && config.serverUrl !== process.env.EXPO_PUBLIC_SERVER_URL) {
         console.log('[loadAppConfig] Override serverUrl from EXPO_PUBLIC_SERVER_URL');
         config.serverUrl = process.env.EXPO_PUBLIC_SERVER_URL;
+    }
+    if (process.env.EXPO_PUBLIC_LOCAL_VOICE_ENABLED) {
+        const localVoiceEnabled = process.env.EXPO_PUBLIC_LOCAL_VOICE_ENABLED === 'true';
+        if (config.localVoiceEnabled !== localVoiceEnabled) {
+            console.log('[loadAppConfig] Override localVoiceEnabled from EXPO_PUBLIC_LOCAL_VOICE_ENABLED');
+            config.localVoiceEnabled = localVoiceEnabled;
+        }
     }
 
     return config as AppConfig;

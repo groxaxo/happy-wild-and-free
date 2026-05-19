@@ -1,6 +1,11 @@
 import { z } from "zod";
 import * as crypto from "crypto";
-import { VoiceConversationResponseSchema, VoiceUsageResponseSchema } from "@slopus/happy-wire";
+import {
+    VoiceAssistantRequestSchema,
+    VoiceAssistantResponseSchema,
+    VoiceConversationResponseSchema,
+    VoiceUsageResponseSchema,
+} from "@slopus/happy-wire";
 import { type Fastify } from "../types";
 import { log } from "@/utils/log";
 
@@ -8,6 +13,20 @@ const VOICE_FREE_LIMIT_SECONDS = 1200;  // 20 minutes free tier per 30 days (~$0
 const VOICE_HARD_LIMIT_SECONDS = 18000; // 5 hours absolute cap per 30 days (even with subscription)
 const VOICE_MAX_CONVERSATIONS = 100;    // Max conversations trackable per 30 days (ElevenLabs page_size limit)
 const ELEVEN_LABS_API = "https://api.elevenlabs.io/v1/convai";
+// Tailscale host for local voice proxies.
+// GPU split on that host:
+// - LLM proxy on :12434 reserves the RTX 3090s.
+// - Chatterbox TTS proxy on :8020 is pinned to the RTX 3060 at GPU index 2.
+// - ASR proxy on :5092 should stay off the RTX 3090s; the current parakeet proxy is CPU-backed.
+const LOCAL_VOICE_PROXY_HOST = "100.85.200.51";
+const DEFAULT_LOCAL_LLM_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:12434/v1`;
+const DEFAULT_LOCAL_LLM_MODEL = "qwen36-35b-awq-instruct";
+const DEFAULT_LOCAL_TTS_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:8020/v1`;
+const DEFAULT_LOCAL_TTS_MODEL = "tts-1-es";
+const DEFAULT_LOCAL_TTS_VOICE = "latina";
+const DEFAULT_LOCAL_TTS_AUDIO_PROMPT_PATH = "/home/op/voxcpm2-server/reference_audio/newlatina_ref.wav";
+const DEFAULT_LOCAL_ASR_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:5092/v1`;
+const LOCAL_LLM_BUSY_RETRIES = 6;
 
 function deriveElevenUserId(happyUserId: string): string {
     const hmac = crypto.createHmac("sha256", process.env.HANDY_MASTER_SECRET!);
@@ -80,6 +99,143 @@ async function hasActiveSubscription(userId: string): Promise<boolean> {
     } catch {
         return false;
     }
+}
+
+function getLocalLlmBaseUrl(): string {
+    return (process.env.LOCAL_LLM_BASE_URL || DEFAULT_LOCAL_LLM_BASE_URL).replace(/\/$/, "");
+}
+
+function getLocalLlmModel(): string {
+    return process.env.LOCAL_LLM_MODEL || DEFAULT_LOCAL_LLM_MODEL;
+}
+
+function getLocalTtsBaseUrl(): string {
+    return (process.env.LOCAL_TTS_BASE_URL || DEFAULT_LOCAL_TTS_BASE_URL).replace(/\/$/, "");
+}
+
+function getLocalTtsModel(): string {
+    return process.env.LOCAL_TTS_MODEL || DEFAULT_LOCAL_TTS_MODEL;
+}
+
+function getLocalTtsVoice(): string {
+    return process.env.LOCAL_TTS_VOICE || DEFAULT_LOCAL_TTS_VOICE;
+}
+
+function getLocalTtsAudioPromptPath(): string {
+    return process.env.LOCAL_TTS_AUDIO_PROMPT_PATH || DEFAULT_LOCAL_TTS_AUDIO_PROMPT_PATH;
+}
+
+function getLocalAsrBaseUrl(): string {
+    return (process.env.LOCAL_ASR_BASE_URL || DEFAULT_LOCAL_ASR_BASE_URL).replace(/\/$/, "");
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function toOpenAiMessage(message: z.infer<typeof VoiceAssistantRequestSchema>["messages"][number]) {
+    if (message.role === "assistant") {
+        return {
+            role: "assistant",
+            content: message.content,
+            ...(message.toolCalls?.length ? {
+                tool_calls: message.toolCalls.map((toolCall: { id: string; name: string; arguments: string }) => ({
+                    id: toolCall.id,
+                    type: "function",
+                    function: {
+                        name: toolCall.name,
+                        arguments: toolCall.arguments,
+                    },
+                })),
+            } : {}),
+        };
+    }
+
+    if (message.role === "tool") {
+        return {
+            role: "tool",
+            content: message.content,
+            tool_call_id: message.toolCallId,
+            name: message.name,
+        };
+    }
+
+    return {
+        role: message.role,
+        content: message.content,
+    };
+}
+
+async function requestLocalAssistantCompletion(
+    body: z.infer<typeof VoiceAssistantRequestSchema>,
+): Promise<z.infer<typeof VoiceAssistantResponseSchema>> {
+    const llmUrl = `${getLocalLlmBaseUrl()}/chat/completions`;
+    const payload = {
+        model: getLocalLlmModel(),
+        messages: body.messages.map(toOpenAiMessage),
+        tools: body.tools,
+        tool_choice: "auto",
+        parallel_tool_calls: false,
+        temperature: 0.1,
+    };
+
+    let lastErrorText = "Local model request failed";
+    let lastStatus = 502;
+
+    for (let attempt = 0; attempt < LOCAL_LLM_BUSY_RETRIES; attempt++) {
+        const response = await fetch(llmUrl, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+        });
+
+        if (response.ok) {
+            const raw = await response.json() as {
+                choices?: Array<{
+                    message?: {
+                        content?: string | null;
+                        tool_calls?: Array<{
+                            id?: string;
+                            function?: {
+                                name?: string;
+                                arguments?: string;
+                            };
+                        }>;
+                    };
+                }>;
+            };
+            const message = raw.choices?.[0]?.message;
+            return VoiceAssistantResponseSchema.parse({
+                message: {
+                    role: "assistant",
+                    content: message?.content ?? "",
+                    toolCalls: (message?.tool_calls ?? []).map((toolCall: {
+                        id?: string;
+                        function?: {
+                            name?: string;
+                            arguments?: string;
+                        };
+                    }) => ({
+                        id: toolCall.id ?? "",
+                        name: toolCall.function?.name ?? "",
+                        arguments: toolCall.function?.arguments ?? "{}",
+                    })),
+                },
+            });
+        }
+
+        lastStatus = response.status;
+        lastErrorText = await response.text();
+        if (response.status !== 409 || attempt === LOCAL_LLM_BUSY_RETRIES - 1) {
+            break;
+        }
+
+        await sleep(1000 * (attempt + 1));
+    }
+
+    throw new Error(`[${lastStatus}] ${lastErrorText}`);
 }
 
 export function voiceRoutes(app: Fastify) {
@@ -227,6 +383,66 @@ export function voiceRoutes(app: Fastify) {
         } catch (error) {
             log({ module: 'voice' }, `Failed to get voice usage for user ${userId}: ${error}`);
             return reply.code(500).send({ error: 'Failed to get voice usage' });
+        }
+    });
+
+    app.post('/v1/voice/assistant/chat', {
+        preHandler: app.authenticate,
+        schema: {
+            body: VoiceAssistantRequestSchema,
+            response: {
+                200: VoiceAssistantResponseSchema,
+                502: z.object({ error: z.string() }),
+            },
+        },
+    }, async (request, reply) => {
+        try {
+            return reply.send(await requestLocalAssistantCompletion(request.body));
+        } catch (error) {
+            log({ module: 'voice-local' }, `Local voice chat failed for user ${request.userId}: ${error}`);
+            return reply.code(502).send({
+                error: error instanceof Error ? error.message : 'Local voice chat failed',
+            });
+        }
+    });
+
+    app.post('/v1/voice/assistant/speech', {
+        preHandler: app.authenticate,
+        schema: {
+            body: z.object({
+                input: z.string().min(1),
+            }),
+        },
+    }, async (request, reply) => {
+        try {
+            const response = await fetch(`${getLocalTtsBaseUrl()}/audio/speech`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    model: getLocalTtsModel(),
+                    voice: getLocalTtsVoice(),
+                    audio_prompt_path: getLocalTtsAudioPromptPath(),
+                    language: "es",
+                    input: request.body.input,
+                    response_format: "mp3",
+                }),
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`[${response.status}] ${errorText}`);
+            }
+
+            const audioBuffer = Buffer.from(await response.arrayBuffer());
+            reply.header('content-type', response.headers.get('content-type') || 'audio/mpeg');
+            return reply.send(audioBuffer);
+        } catch (error) {
+            log({ module: 'voice-local' }, `Local voice speech failed for user ${request.userId}: ${error}`);
+            return reply.code(502).send({
+                error: error instanceof Error ? error.message : 'Local voice speech failed',
+            });
         }
     });
 }

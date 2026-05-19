@@ -34,3 +34,49 @@ export const VoiceUsageResponseSchema = z.object({
 });
 
 export type VoiceUsageResponse = z.infer<typeof VoiceUsageResponseSchema>;
+
+export const VoiceAssistantToolCallSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    arguments: z.string(),
+});
+
+export type VoiceAssistantToolCall = z.infer<typeof VoiceAssistantToolCallSchema>;
+
+export const VoiceAssistantMessageSchema = z.object({
+    role: z.enum(['system', 'user', 'assistant', 'tool']),
+    content: z.string(),
+    toolCallId: z.string().optional(),
+    name: z.string().optional(),
+    toolCalls: z.array(VoiceAssistantToolCallSchema).optional(),
+});
+
+export type VoiceAssistantMessage = z.infer<typeof VoiceAssistantMessageSchema>;
+
+export const VoiceAssistantToolDefinitionSchema = z.object({
+    type: z.literal('function'),
+    function: z.object({
+        name: z.string(),
+        description: z.string(),
+        parameters: z.record(z.string(), z.unknown()),
+    }),
+});
+
+export type VoiceAssistantToolDefinition = z.infer<typeof VoiceAssistantToolDefinitionSchema>;
+
+export const VoiceAssistantRequestSchema = z.object({
+    messages: z.array(VoiceAssistantMessageSchema),
+    tools: z.array(VoiceAssistantToolDefinitionSchema).default([]),
+});
+
+export type VoiceAssistantRequest = z.infer<typeof VoiceAssistantRequestSchema>;
+
+export const VoiceAssistantResponseSchema = z.object({
+    message: z.object({
+        role: z.literal('assistant'),
+        content: z.string(),
+        toolCalls: z.array(VoiceAssistantToolCallSchema).default([]),
+    }),
+});
+
+export type VoiceAssistantResponse = z.infer<typeof VoiceAssistantResponseSchema>;
