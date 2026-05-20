@@ -1,5 +1,4 @@
 import React, { useEffect, useRef } from 'react';
-import { TokenStorage } from '@/auth/tokenStorage';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { storage } from '@/sync/storage';
@@ -605,13 +604,8 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
     }
 
     private async runLocalAsrTurn(audioBlob: Blob): Promise<void> {
-        const credentials = await TokenStorage.getCredentials();
-        if (!credentials) {
-            throw new Error('Missing auth credentials for local voice transcription');
-        }
-
         const { voiceAssistantLanguage } = storage.getState().settings;
-        const response = await transcribeLocalVoiceAudio(credentials, audioBlob, {
+        const response = await transcribeLocalVoiceAudio(audioBlob, {
             language: voiceAssistantLanguage,
         });
         const transcript = response.text.trim();
@@ -687,11 +681,6 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
     }
 
     private async generateNarration(instruction: string): Promise<string> {
-        const credentials = await TokenStorage.getCredentials();
-        if (!credentials) {
-            throw new Error('Missing auth credentials for local voice narration');
-        }
-
         const messages: Array<{ role: 'system' | 'user'; content: string }> = [
             { role: 'system', content: LOCAL_NARRATION_SYSTEM_PROMPT },
         ];
@@ -715,7 +704,7 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
             content: instruction,
         });
 
-        const response = await fetchLocalVoiceAssistantResponse(credentials, {
+        const response = await fetchLocalVoiceAssistantResponse({
             messages,
             tools: [],
         });
@@ -729,16 +718,11 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
             return;
         }
 
-        const credentials = await TokenStorage.getCredentials();
-        if (!credentials) {
-            throw new Error('Missing auth credentials for local voice speech');
-        }
-
         storage.getState().setRealtimeMode('agent-speaking', true);
 
         const { voiceAssistantLanguage } = storage.getState().settings;
         const { voiceTtsProvider } = storage.getState().localSettings;
-        const blob = await synthesizeLocalVoiceSpeech(credentials, trimmed, {
+        const blob = await synthesizeLocalVoiceSpeech(trimmed, {
             provider: voiceTtsProvider,
             language: voiceAssistantLanguage,
         });

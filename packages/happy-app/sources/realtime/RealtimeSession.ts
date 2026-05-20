@@ -48,13 +48,6 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
     }
 
     try {
-        const credentials = await TokenStorage.getCredentials();
-        if (!credentials) {
-            storage.getState().setRealtimeStatus('disconnected');
-            Modal.alert(t('common.error'), t('errors.authenticationFailed'));
-            return null;
-        }
-
         const hasPro = storage.getState().purchases.entitlements['pro'] ?? false;
         const { voiceUpsellOverride, devModeEnabled } = storage.getState().localSettings;
         const voiceUpsellVariant = getVoiceUpsellVariant({
@@ -87,6 +80,13 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
             currentVoiceSessionStartedAt = Date.now();
             voiceSessionStarted = true;
             return currentVoiceConversationId;
+        }
+
+        const credentials = await TokenStorage.getCredentials();
+        if (!credentials) {
+            storage.getState().setRealtimeStatus('disconnected');
+            Modal.alert(t('common.error'), t('errors.authenticationFailed'));
+            return null;
         }
 
         // Bypass Happy server token — only when user has their own custom agent

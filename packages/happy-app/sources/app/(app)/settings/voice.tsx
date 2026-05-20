@@ -269,7 +269,7 @@ export default React.memo(function VoiceSettingsScreen() {
             {localVoiceEnabled && (
                 <ItemGroup
                     title="Local Speech"
-                    footer="Provider selection applies to local web voice input and playback."
+                    footer="Local web voice connects directly from the browser to your configured STT, TTS, and LLM endpoints. Huppie auth and the Huppie server are not required for this path."
                 >
                     <Item
                         title="Input Provider"
