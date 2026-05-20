@@ -167,14 +167,11 @@ function readCodexOpenAiApiKey(): string | null {
     }
 }
 
-function getOpenAiApiKey(): string {
+function getConfiguredOpenAiApiKey(): string | null {
     const apiKey = process.env.OPENAI_API_KEY?.trim()
         || process.env.CODEX_OPENAI_API_KEY?.trim()
         || readCodexOpenAiApiKey();
-    if (!apiKey) {
-        throw new Error("OPENAI_API_KEY not configured");
-    }
-    return apiKey;
+    return apiKey || null;
 }
 
 function getOpenAiApiBaseUrl(): string {
@@ -306,8 +303,9 @@ function getXaiJsonHeaders(): Record<string, string> {
 }
 
 function getOpenAiJsonHeaders(): Record<string, string> {
+    const apiKey = getConfiguredOpenAiApiKey();
     return {
-        "Authorization": `Bearer ${getOpenAiApiKey()}`,
+        ...(apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}),
         "Content-Type": "application/json",
     };
 }

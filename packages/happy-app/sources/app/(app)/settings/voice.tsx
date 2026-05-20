@@ -19,10 +19,10 @@ import { trackPaywallButtonClicked } from '@/track';
 import { getVoiceExperimentStatus, getVoiceUpsellVariantLabel } from '@/realtime/voiceExperiment';
 import { getVoiceLocalCounters, resetVoiceLocalCounters } from '@/sync/persistence';
 import { config } from '@/config';
-import type { VoiceAsrProvider } from '@slopus/happy-wire';
+import type { VoiceAsrProvider, VoiceSpeechProvider } from '@slopus/happy-wire';
 
-const VOICE_TTS_PROVIDER_LABELS = {
-    openai: 'OpenAI TTS',
+const VOICE_TTS_PROVIDER_LABELS: Record<VoiceSpeechProvider, string> = {
+    openai: 'OpenAI-compatible',
     xai: 'xAI Grok',
     chatterbox_multilingual: 'Chatterbox (local)',
     neutts: 'NeuTTS (local)',
@@ -123,7 +123,7 @@ export default React.memo(function VoiceSettingsScreen() {
     const handleVoiceTtsProvider = React.useCallback(() => {
         Modal.alert(
             'Speech Provider',
-            'Choose the text-to-speech backend for local web voice playback. OpenAI, Chatterbox, and NeuTTS use OpenAI-compatible endpoints; xAI uses its own API.',
+            'Choose the text-to-speech backend for local web voice playback. OpenAI-compatible, Chatterbox, and NeuTTS use /audio/speech; xAI uses its own /tts API.',
             [
                 { text: VOICE_TTS_PROVIDER_LABELS.openai, onPress: () => setVoiceTtsProvider('openai') },
                 { text: VOICE_TTS_PROVIDER_LABELS.xai, onPress: () => setVoiceTtsProvider('xai') },
