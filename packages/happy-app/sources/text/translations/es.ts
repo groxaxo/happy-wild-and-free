@@ -331,7 +331,8 @@ export const es: TranslationStructure = {
         failedToConnectToServer: 'Falló al conectar con el servidor',
         currentlyUsingCustomServer: 'Actualmente usando servidor personalizado',
         customServerUrlLabel: 'URL del servidor personalizado',
-        advancedFeatureFooter: 'Esta es una característica avanzada. Solo cambia el servidor si sabes lo que haces. Necesitarás cerrar sesión e iniciarla nuevamente después de cambiar servidores.'
+        advancedFeatureFooter: 'Esta es una característica avanzada. Solo cambia el servidor si sabes lo que haces. Necesitarás cerrar sesión e iniciarla nuevamente después de cambiar servidores.',
+        useLocalServer: 'Usar servidor local'
     },
 
     sessionInfo: {

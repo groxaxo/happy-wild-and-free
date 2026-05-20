@@ -329,7 +329,8 @@ export const it: TranslationStructure = {
         failedToConnectToServer: 'Impossibile connettersi al server',
         currentlyUsingCustomServer: 'Attualmente si usa un server personalizzato',
         customServerUrlLabel: 'URL server personalizzato',
-        advancedFeatureFooter: 'Questa è una funzionalità avanzata. Cambia il server solo se sai cosa stai facendo. Dovrai disconnetterti e accedere di nuovo dopo aver cambiato server.'
+        advancedFeatureFooter: 'Questa è una funzionalità avanzata. Cambia il server solo se sai cosa stai facendo. Dovrai disconnetterti e accedere di nuovo dopo aver cambiato server.',
+        useLocalServer: 'Usa il server locale'
     },
 
     sessionInfo: {

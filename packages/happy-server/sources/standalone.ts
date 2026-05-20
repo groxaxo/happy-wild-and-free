@@ -18,6 +18,7 @@ crypto.subtle.importKey = function (format: any, keyData: any, algorithm: any, e
 } as any;
 
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { createPGlite } from "./storage/pgliteLoader";
 
@@ -139,6 +140,22 @@ async function serve() {
         staticDir,
         injectHtmlConfig,
     });
+
+    // Print local network addresses so mobile users know what URL to enter.
+    const lanAddresses = Object.values(os.networkInterfaces())
+        .flat()
+        .filter((n): n is os.NetworkInterfaceInfo => !!n && n.family === 'IPv4' && !n.internal)
+        .map(n => `http://${n.address}:${port}`);
+
+    console.log('\nHuppie Server ready:');
+    console.log(`  Local:    http://localhost:${port}`);
+    for (const addr of lanAddresses) {
+        console.log(`  Network:  ${addr}`);
+    }
+    if (lanAddresses.length > 0) {
+        console.log('\n  -> To connect a phone or tablet: open Settings > Server in the app');
+        console.log(`     and enter the Network URL above.\n`);
+    }
 
     // Block until shutdown so the process stays alive.
     const { awaitShutdown } = await import("./utils/shutdown");

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { memo, useState } from 'react';
+import { View, TextInput, KeyboardAvoidingView, Platform, TouchableOpacity } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Text } from '@/components/StyledText';
 import { Typography } from '@/constants/Typography';
@@ -67,6 +67,17 @@ const stylesheet = StyleSheet.create((theme) => ({
     buttonWrapper: {
         flex: 1,
     },
+    hintText: {
+        ...Typography.default(),
+        fontSize: 12,
+        color: theme.colors.textSecondary,
+        marginBottom: 8,
+    },
+    hintLink: {
+        ...Typography.default('semiBold'),
+        fontSize: 12,
+        color: theme.colors.textLink,
+    },
     statusText: {
         ...Typography.default(),
         fontSize: 12,
@@ -75,7 +86,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export default function ServerConfigScreen() {
+export default memo(function ServerConfigScreen() {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
@@ -176,6 +187,19 @@ export default function ServerConfigScreen() {
                     <ItemGroup footer={t('server.advancedFeatureFooter')}>
                         <View style={styles.contentContainer}>
                             <Text style={styles.labelText}>{t('server.customServerUrlLabel').toUpperCase()}</Text>
+                            {Platform.OS === 'web' && (
+                                <TouchableOpacity
+                                    onPress={() => {
+                                        setInputUrl('http://localhost:3005');
+                                        setError(null);
+                                    }}
+                                >
+                                    <Text style={styles.hintText}>
+                                        {t('server.useLocalServer')}{' '}
+                                        <Text style={styles.hintLink}>localhost:3005</Text>
+                                    </Text>
+                                </TouchableOpacity>
+                            )}
                             <TextInput
                                 style={[
                                     styles.textInput,
@@ -233,4 +257,4 @@ export default function ServerConfigScreen() {
             </KeyboardAvoidingView>
         </>
     );
-}
+});

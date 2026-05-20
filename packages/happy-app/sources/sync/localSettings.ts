@@ -39,7 +39,7 @@ export const localSettingsDefaults: LocalSettings = {
     debugMode: false,
     devModeEnabled: false,
     voiceUpsellOverride: null,
-    voiceTtsProvider: 'openai',
+    voiceTtsProvider: 'chatterbox_multilingual',
     voiceAsrProvider: 'local',
     commandPaletteEnabled: false,
     themePreference: 'adaptive',

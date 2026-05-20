@@ -737,8 +737,12 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
         storage.getState().setRealtimeMode('agent-speaking', true);
 
         const { voiceAssistantLanguage } = storage.getState().settings;
+        const { voiceTtsProvider } = storage.getState().localSettings;
+        const narratorProvider = voiceTtsProvider === 'chatterbox_multilingual' || voiceTtsProvider === 'neutts'
+            ? voiceTtsProvider
+            : 'chatterbox_multilingual';
         const blob = await synthesizeLocalVoiceSpeech(credentials, trimmed, {
-            provider: 'xai',
+            provider: narratorProvider,
             language: voiceAssistantLanguage,
         });
         if (!this.sessionActive) {

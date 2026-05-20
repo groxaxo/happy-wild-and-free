@@ -331,7 +331,8 @@ export const ca: TranslationStructure = {
         failedToConnectToServer: 'Ha fallat la connexió amb el servidor',
         currentlyUsingCustomServer: 'Actualment utilitzant un servidor personalitzat',
         customServerUrlLabel: 'URL del servidor personalitzat',
-        advancedFeatureFooter: 'Aquesta és una funció avançada. Només canvia el servidor si saps el que fas. Hauràs de tancar la sessió i tornar-la a iniciar després de canviar els servidors.'
+        advancedFeatureFooter: 'Aquesta és una funció avançada. Només canvia el servidor si saps el que fas. Hauràs de tancar la sessió i tornar-la a iniciar després de canviar els servidors.',
+        useLocalServer: 'Usa el servidor local'
     },
 
     sessionInfo: {
