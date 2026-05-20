@@ -84,11 +84,16 @@ for (const root of nodeModulesRoots) {
         let modified = false;
 
         for (const [from, to] of filePatches) {
-            if (content.includes(from)) {
-                content = content.replace(from, to);
+            // Check for `to` first: if the full replacement text is already
+            // present the patch was already applied — do NOT re-apply, because
+            // `from` is a prefix of `to` and a naïve `includes(from)` would be
+            // true even after patching, causing duplicate insertions.
+            if (content.includes(to)) {
+                // Already patched – mark as modified so the file still gets
+                // written if a sibling patch in the same loop made changes.
                 modified = true;
-            } else if (content.includes(to)) {
-                // Already patched
+            } else if (content.includes(from)) {
+                content = content.replace(from, to);
                 modified = true;
             } else {
                 console.warn(`[fix-expo-crypto-subtle-unavailable] Could not find patch target in ${filePath}:`);
