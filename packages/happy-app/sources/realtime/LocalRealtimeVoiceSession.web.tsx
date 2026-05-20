@@ -738,11 +738,8 @@ class LocalRealtimeVoiceSessionImpl implements VoiceSession {
 
         const { voiceAssistantLanguage } = storage.getState().settings;
         const { voiceTtsProvider } = storage.getState().localSettings;
-        const narratorProvider = voiceTtsProvider === 'chatterbox_multilingual' || voiceTtsProvider === 'neutts'
-            ? voiceTtsProvider
-            : 'chatterbox_multilingual';
         const blob = await synthesizeLocalVoiceSpeech(credentials, trimmed, {
-            provider: narratorProvider,
+            provider: voiceTtsProvider,
             language: voiceAssistantLanguage,
         });
         if (!this.sessionActive) {
