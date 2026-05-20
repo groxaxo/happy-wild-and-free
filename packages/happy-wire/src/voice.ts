@@ -81,7 +81,7 @@ export const VoiceAssistantResponseSchema = z.object({
 
 export type VoiceAssistantResponse = z.infer<typeof VoiceAssistantResponseSchema>;
 
-export const VoiceSpeechProviderSchema = z.enum(['xai', 'chatterbox_multilingual', 'neutts']);
+export const VoiceSpeechProviderSchema = z.enum(['openai', 'xai', 'chatterbox_multilingual', 'neutts']);
 
 export type VoiceSpeechProvider = z.infer<typeof VoiceSpeechProviderSchema>;
 

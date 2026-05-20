@@ -22,7 +22,10 @@ import { config } from '@/config';
 import type { VoiceAsrProvider } from '@slopus/happy-wire';
 
 const VOICE_TTS_PROVIDER_LABELS = {
+    openai: 'OpenAI TTS',
     xai: 'xAI Grok',
+    chatterbox_multilingual: 'Chatterbox (local)',
+    neutts: 'NeuTTS (local)',
 };
 
 const VOICE_ASR_PROVIDER_LABELS: Record<VoiceAsrProvider, string> = {
@@ -44,6 +47,7 @@ export default React.memo(function VoiceSettingsScreen() {
     const [voiceBypassToken, setVoiceBypassToken] = useSettingMutable('voiceBypassToken');
     const [voiceUpsellOverride, setVoiceUpsellOverride] = useLocalSettingMutable('voiceUpsellOverride');
     const [voiceAsrProvider, setVoiceAsrProvider] = useLocalSettingMutable('voiceAsrProvider');
+    const [voiceTtsProvider, setVoiceTtsProvider] = useLocalSettingMutable('voiceTtsProvider');
     const experiments = useSetting('experiments');
     const devModeEnabled = __DEV__ || useLocalSetting('devModeEnabled');
     const localVoiceEnabled = config.localVoiceEnabled ?? false;
@@ -116,6 +120,20 @@ export default React.memo(function VoiceSettingsScreen() {
         );
     }, [setVoiceAsrProvider]);
 
+    const handleVoiceTtsProvider = React.useCallback(() => {
+        Modal.alert(
+            'Speech Provider',
+            'Choose the text-to-speech backend for local web voice playback.\nOpenAI-compatible endpoints are supported for all options.',
+            [
+                { text: VOICE_TTS_PROVIDER_LABELS.openai, onPress: () => setVoiceTtsProvider('openai') },
+                { text: VOICE_TTS_PROVIDER_LABELS.xai, onPress: () => setVoiceTtsProvider('xai') },
+                { text: VOICE_TTS_PROVIDER_LABELS.chatterbox_multilingual, onPress: () => setVoiceTtsProvider('chatterbox_multilingual') },
+                { text: VOICE_TTS_PROVIDER_LABELS.neutts, onPress: () => setVoiceTtsProvider('neutts') },
+                { text: t('common.cancel'), style: 'cancel' },
+            ],
+        );
+    }, [setVoiceTtsProvider]);
+
     const handleResetVoiceCounters = React.useCallback(async () => {
         const confirmed = await Modal.confirm(
             'Reset Voice Counters',
@@ -146,7 +164,7 @@ export default React.memo(function VoiceSettingsScreen() {
         const upsellVariant = getVoiceUpsellVariantLabel(voiceExperimentStatus.upsellVariant);
         const gatingMode = voiceExperimentStatus.gatingMode === 'direct-byo-agent'
             ? 'direct BYO agent bypass'
-            : 'Happy server gate';
+            : 'Huppie server gate';
 
         return [
             `voice-upsell: ${upsellVariant}`,
@@ -221,7 +239,7 @@ export default React.memo(function VoiceSettingsScreen() {
             {devModeEnabled && (
                 <ItemGroup
                     title="Developer"
-                    footer="Developer-only diagnostics and local override controls for the current voice rollout. The paid voice gate runs through Happy server unless Direct Connection and a custom ElevenLabs agent are both enabled."
+                    footer="Developer-only diagnostics and local override controls for the current voice rollout. The paid voice gate runs through Huppie server unless Direct Connection and a custom ElevenLabs agent are both enabled."
                 >
                     <Item
                         title="Voice Experiment Override"
@@ -262,10 +280,10 @@ export default React.memo(function VoiceSettingsScreen() {
                     />
                     <Item
                         title="Speech Provider"
-                        subtitle="Local web playback is routed through xAI"
-                        detail={VOICE_TTS_PROVIDER_LABELS.xai}
+                        subtitle="Text-to-speech backend for local web voice playback"
+                        detail={VOICE_TTS_PROVIDER_LABELS[voiceTtsProvider] ?? voiceTtsProvider}
                         icon={<Ionicons name="volume-high-outline" size={29} color="#34C759" />}
-                        showChevron={false}
+                        onPress={handleVoiceTtsProvider}
                     />
                 </ItemGroup>
             )}

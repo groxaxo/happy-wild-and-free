@@ -21,11 +21,11 @@ const VOICE_FREE_LIMIT_SECONDS = 1200;  // 20 minutes free tier per 30 days (~$0
 const VOICE_HARD_LIMIT_SECONDS = 18000; // 5 hours absolute cap per 30 days (even with subscription)
 const VOICE_MAX_CONVERSATIONS = 100;    // Max conversations trackable per 30 days (ElevenLabs page_size limit)
 const ELEVEN_LABS_API = "https://api.elevenlabs.io/v1/convai";
-const LOCAL_VOICE_PROXY_HOST = "100.85.200.51";
+const LOCAL_VOICE_PROXY_HOST = "127.0.0.1";
 const DEFAULT_LOCAL_LLM_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:12434/v1`;
-const DEFAULT_LOCAL_LLM_MODEL = "qwen36-35b-awq-general";
+const DEFAULT_LOCAL_LLM_MODEL = "qwen2.5-14b-instruct";
 const DEFAULT_LOCAL_ASR_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:5092/v1`;
-const DEFAULT_LOCAL_ASR_MODEL = "parakeet-tdt-0.6b-v3";
+const DEFAULT_LOCAL_ASR_MODEL = "whisper-1";
 const DEFAULT_CODEX_EXEC_MODEL = "gpt-5.3-codex-spark";
 const DEFAULT_CODEX_EXEC_REASONING_EFFORT = "high";
 const DEFAULT_CODEX_EXEC_TIMEOUT_MS = 45_000;
@@ -45,9 +45,12 @@ const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_MODEL = "tts-1-es";
 const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_VOICE = "latina";
 const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_LANGUAGE = "es";
 const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_RESPONSE_FORMAT = "mp3";
-const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH = "/home/op/voxcpm2-server/reference_audio/newlatina_ref.wav";
+const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH = "";
 const DEFAULT_NEUTTS_SPANISH_TTS_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:12438/v1`;
 const DEFAULT_NEUTTS_ENGLISH_TTS_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:12437/v1`;
+const DEFAULT_OPENAI_TTS_MODEL = "tts-1";
+const DEFAULT_OPENAI_TTS_VOICE = "alloy";
+const DEFAULT_OPENAI_TTS_RESPONSE_FORMAT = "mp3";
 const DEFAULT_NEUTTS_TTS_MODEL = "tts-1";
 const DEFAULT_NEUTTS_SPANISH_TTS_VOICE = "mateo";
 const DEFAULT_NEUTTS_ENGLISH_TTS_VOICE = "dave";
@@ -243,7 +246,19 @@ function getDefaultLocalTtsProvider(): VoiceSpeechProvider {
     const parsed = VoiceSpeechProviderSchema.safeParse(
         process.env.LOCAL_VOICE_TTS_PROVIDER || process.env.LOCAL_TTS_PROVIDER,
     );
-    return parsed.success ? parsed.data : "xai";
+    return parsed.success ? parsed.data : "openai";
+}
+
+function getOpenAiTtsModel(): string {
+    return process.env.OPENAI_TTS_MODEL || DEFAULT_OPENAI_TTS_MODEL;
+}
+
+function getOpenAiTtsVoice(): string {
+    return process.env.OPENAI_TTS_VOICE || DEFAULT_OPENAI_TTS_VOICE;
+}
+
+function getOpenAiTtsResponseFormat(): string {
+    return process.env.OPENAI_TTS_RESPONSE_FORMAT || DEFAULT_OPENAI_TTS_RESPONSE_FORMAT;
 }
 
 function getLocalVoiceLlmProvider(): VoiceLlmProvider {
@@ -751,7 +766,7 @@ function formatCodexMessage(message: VoiceAssistantMessage): string {
 
 function buildCodexNarrationPrompt(body: VoiceAssistantRequest): string {
     return [
-        "You are running as Happy's web voice narrator.",
+        "You are running as Huppie's web voice narrator.",
         "Return only the final spoken narration text. Do not use markdown, code blocks, or tool calls.",
         ...body.messages.map(formatCodexMessage),
     ].join("\n\n");
@@ -999,6 +1014,33 @@ async function requestLocalAssistantCompletion(body: VoiceAssistantRequest): Pro
     }
 }
 
+async function requestOpenAiSpeech(input: string): Promise<{ audioBuffer: Buffer; contentType: string }> {
+    const text = input.trim();
+    if (!text) {
+        throw new Error("Speech input is empty");
+    }
+
+    const response = await fetchOpenAiWithRetries("/audio/speech", {
+        method: "POST",
+        headers: getOpenAiJsonHeaders(),
+        body: JSON.stringify({
+            model: getOpenAiTtsModel(),
+            input: text,
+            voice: getOpenAiTtsVoice(),
+            response_format: getOpenAiTtsResponseFormat(),
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`[${response.status}] ${await response.text()}`);
+    }
+
+    return {
+        audioBuffer: Buffer.from(await response.arrayBuffer()),
+        contentType: response.headers.get("content-type") || "audio/mpeg",
+    };
+}
+
 async function requestXaiSpeech(input: string, language?: string | null): Promise<{ audioBuffer: Buffer; contentType: string }> {
     const text = input.trim();
     if (!text) {
@@ -1099,6 +1141,8 @@ async function requestLocalSpeech(
     language?: string | null,
 ): Promise<{ audioBuffer: Buffer; contentType: string }> {
     switch (provider) {
+        case "openai":
+            return requestOpenAiSpeech(input);
         case "xai":
             return requestXaiSpeech(input, language);
         case "chatterbox_multilingual":
