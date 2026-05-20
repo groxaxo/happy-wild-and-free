@@ -1,8 +1,8 @@
 const variant = process.env.APP_ENV || 'development';
 const name = {
-    development: "Happy (dev)",
-    preview: "Happy (preview)",
-    production: "Happy"
+    development: "Happy Wild and Free (dev)",
+    preview: "Happy Wild and Free (preview)",
+    production: "Happy Wild and Free"
 }[variant];
 const bundleId = {
     development: "com.slopus.happy.dev",

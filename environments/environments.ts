@@ -15,6 +15,41 @@ const ENVIRONMENTS_DATA_DIR = path.join(ENVIRONMENTS_ROOT, "data");
 const ENVIRONMENTS_DIR = path.join(ENVIRONMENTS_DATA_DIR, "envs");
 const CURRENT_ENV_PATH = path.join(ENVIRONMENTS_DATA_DIR, "current.json");
 const LAB_RAT_PROJECT_TEMPLATE_DIR = path.join(ENVIRONMENTS_ROOT, "lab-rat-todo-project");
+const DEV_HOST = process.env.HAPPY_DEV_HOST || "100.85.200.51";
+const DEV_HTTPS_ORIGIN = (process.env.HAPPY_DEV_HTTPS_ORIGIN || "https://happy-wild-free.dorado-gondola.ts.net").replace(/\/$/, "");
+const DEV_LOG_SERVER_URL = process.env.HAPPY_DEV_LOG_SERVER_URL || `http://${DEV_HOST}:8787`;
+const DEV_LONG_AUTH_URL = ["1", "true", "yes"].includes((process.env.HAPPY_DEV_LONG_AUTH_URL || "").toLowerCase());
+
+function devUrl(port: number): string {
+    return `http://${DEV_HOST}:${port}`;
+}
+
+function devWebUrl(port: number): string {
+    return DEV_HTTPS_ORIGIN;
+}
+
+function devServerUrl(port: number): string {
+    return DEV_HTTPS_ORIGIN;
+}
+
+function normalizeDevWebUrl(url: string | undefined, serverPort: number, expoPort: number): string | undefined {
+    if (!url) {
+        return undefined;
+    }
+    try {
+        const parsed = new URL(url);
+        const publicOrigin = new URL(devWebUrl(expoPort));
+        parsed.protocol = publicOrigin.protocol;
+        parsed.hostname = publicOrigin.hostname;
+        parsed.port = publicOrigin.port;
+        if (parsed.searchParams.has("dev_token") || parsed.searchParams.has("dev_secret") || parsed.searchParams.has("server_url")) {
+            parsed.searchParams.set("server_url", devServerUrl(serverPort));
+        }
+        return parsed.toString();
+    } catch {
+        return url;
+    }
+}
 
 // ============================================================================
 // Name generation (expanded from packages/happy-app/sources/utils/generateWorktreeName.ts)
@@ -111,7 +146,11 @@ function writeCurrentConfig(current: string) {
 
 function readEnvironmentConfig(name: string): EnvironmentConfig {
     const configPath = path.join(ENVIRONMENTS_DIR, name, "environment.json");
-    return JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as EnvironmentConfig;
+    return {
+        ...config,
+        authenticatedWebUrl: normalizeDevWebUrl(config.authenticatedWebUrl, config.serverPort, config.expoPort),
+    };
 }
 
 function writeEnvironmentConfig(config: EnvironmentConfig) {
@@ -251,6 +290,40 @@ function spawnService(
     return child.pid!;
 }
 
+async function startWebService(envDir: string, config: EnvironmentConfig): Promise<void> {
+    const envVars = buildEnvVars(envDir, config.serverPort, config.expoPort);
+    const mergedEnv: Record<string, string | undefined> = { ...process.env, ...envVars };
+    const webLogFile = path.join(envDir, "web", "stdout.log");
+    fs.mkdirSync(path.join(envDir, "web"), { recursive: true });
+    console.log(`Starting web on port ${config.expoPort}...`);
+    const webPid = spawnService("pnpm", ["web", "--port", String(config.expoPort), "--host", "lan"], {
+        cwd: path.join(REPO_ROOT, "packages", "happy-app"),
+        env: { ...mergedEnv, BROWSER: "none", REACT_NATIVE_PACKAGER_HOSTNAME: DEV_HOST },
+        logFile: webLogFile,
+    });
+    writePidFile(envDir, "web", webPid);
+
+    try {
+        await waitFor(() => isPortInUse(config.expoPort), 30_000, "web");
+    } catch {
+        throw new Error(`Web failed to start. Check logs: ${webLogFile}`);
+    }
+    console.log(`  Web is listening.`);
+}
+
+async function restartWebServiceIfRunning(envDir: string, config: EnvironmentConfig): Promise<void> {
+    const webPid = readPidFile(envDir, "web");
+    if (webPid === null || !isProcessAlive(webPid)) {
+        return;
+    }
+
+    console.log(`Restarting web with seeded dev credentials (PID ${webPid})...`);
+    killProcess(webPid);
+    removePidFile(envDir, "web");
+    await waitFor(() => !isProcessAlive(webPid), 10_000, "web shutdown").catch(() => {});
+    await startWebService(envDir, config);
+}
+
 export const VALID_TEMPLATES = ["authenticated-empty", "empty"] as const;
 export type Template = (typeof VALID_TEMPLATES)[number];
 
@@ -323,8 +396,8 @@ export async function createEnvironment(opts?: { noSwitch?: boolean }): Promise<
 
     console.log("");
     console.log(`Environment created: ${name}`);
-    console.log(`  Server: http://localhost:${serverPort}`);
-    console.log(`  Webapp: http://localhost:${expoPort}`);
+    console.log(`  Server: ${devServerUrl(serverPort)}`);
+    console.log(`  Webapp: ${devWebUrl(expoPort)}`);
     console.log(`  Project: ${projectPath}`);
     console.log("");
     const envShRelative = path.relative(process.cwd(), path.join(envDir, "env.sh"));
@@ -360,7 +433,7 @@ export async function startEnvironmentServices(name: string): Promise<void> {
     });
     writePidFile(envDir, "server", serverPid);
 
-    const serverUrl = `http://localhost:${config.serverPort}`;
+    const serverUrl = devUrl(config.serverPort);
     try {
         await waitFor(async () => {
             const res = await fetch(`${serverUrl}/`);
@@ -371,28 +444,13 @@ export async function startEnvironmentServices(name: string): Promise<void> {
     }
     console.log(`  Server is healthy.`);
 
-    const webLogFile = path.join(envDir, "web", "stdout.log");
-    fs.mkdirSync(path.join(envDir, "web"), { recursive: true });
-    console.log(`Starting web on port ${config.expoPort}...`);
-    const webPid = spawnService("pnpm", ["web", "--port", String(config.expoPort)], {
-        cwd: path.join(REPO_ROOT, "packages", "happy-app"),
-        env: { ...mergedEnv, BROWSER: "none" },
-        logFile: webLogFile,
-    });
-    writePidFile(envDir, "web", webPid);
-
-    try {
-        await waitFor(() => isPortInUse(config.expoPort), 30_000, "web");
-    } catch {
-        throw new Error(`Web failed to start. Check logs: ${webLogFile}`);
-    }
-    console.log(`  Web is listening.`);
+    await startWebService(envDir, config);
 }
 
 export async function seedEnvironment(name: string): Promise<void> {
     const envDir = getEnvironmentDir(name);
     const config = readEnvironmentConfig(name);
-    const serverUrl = `http://localhost:${config.serverPort}`;
+    const serverUrl = devUrl(config.serverPort);
 
     try {
         const res = await fetch(`${serverUrl}/`);
@@ -451,9 +509,10 @@ export async function seedEnvironment(name: string): Promise<void> {
     );
 
     const authenticatedWebUrl = buildAuthenticatedWebUrl(
-        `http://localhost:${config.expoPort}`,
+        devWebUrl(config.expoPort),
         token,
         secretBase64,
+        { serverUrl: devServerUrl(config.serverPort) },
     );
     writeEnvironmentConfig({ ...config, authenticatedWebUrl });
 
@@ -489,6 +548,8 @@ export async function seedEnvironment(name: string): Promise<void> {
         const machines = (await res.json()) as unknown[];
         return machines.length > 0;
     }, 10_000, "machine registration").then(() => true, () => false);
+
+    await restartWebServiceIfRunning(envDir, config);
 
     console.log(`  Seeded: credentials written, daemon ${machineRegistered ? "registered" : "starting"}`);
     console.log(`  Auth URL: ${authenticatedWebUrl}`);
@@ -573,8 +634,8 @@ function commandList() {
         const serverStatus = serverUp ? "running" : "stopped";
         const expoStatus = expoUp ? "running" : "stopped";
 
-        const serverUrl = `http://localhost:${config.serverPort}`;
-        const bundlerUrl = `http://localhost:${config.expoPort}`;
+        const serverUrl = devServerUrl(config.serverPort);
+        const bundlerUrl = devWebUrl(config.expoPort);
         const webAppUrl = config.authenticatedWebUrl ?? bundlerUrl;
 
         console.log(`${marker} ${envName}`);
@@ -629,9 +690,9 @@ function commandCurrent() {
     console.log(envShPath);
 
     const config = readEnvironmentConfig(currentConfig.current);
-    const webAppUrl = config.authenticatedWebUrl ?? `http://localhost:${config.expoPort}`;
-    console.log(`\nServer:  http://localhost:${config.serverPort}`);
-    console.log(`Bundler: http://localhost:${config.expoPort}`);
+    const webAppUrl = config.authenticatedWebUrl ?? devWebUrl(config.expoPort);
+    console.log(`\nServer:  ${devServerUrl(config.serverPort)}`);
+    console.log(`Bundler: ${devWebUrl(config.expoPort)}`);
     console.log(`Web app: ${webAppUrl}`);
 }
 
@@ -674,11 +735,11 @@ function commandRun(service: string, serviceArgs: string[] = []) {
             console.log(`Starting web app for environment "${envName}" on port ${config.expoPort}...`);
             const result = spawnSync(
                 "pnpm",
-                ["web", "--port", String(config.expoPort)],
+                ["web", "--port", String(config.expoPort), "--host", "lan"],
                 {
                     cwd: path.join(REPO_ROOT, "packages", "happy-app"),
                     // Expo treats `--web` as "open in browser". Disable that for env-managed runs.
-                    env: { ...mergedEnv, BROWSER: "none" },
+                    env: { ...mergedEnv, BROWSER: "none", REACT_NATIVE_PACKAGER_HOSTNAME: DEV_HOST },
                     stdio: "inherit",
                 }
             );
@@ -746,16 +807,25 @@ function buildEnvVars(envDir: string, serverPort: number, expoPort: number): Rec
         // Server
         HANDY_MASTER_SECRET: "happy-dev-secret",
         PORT: String(serverPort),
+        HOST: "0.0.0.0",
         NODE_ENV: "development",
         DATA_DIR: path.join(envDir, "server"),
         PGLITE_DIR: path.join(envDir, "server", "pglite"),
         DATABASE_URL: "",
+        PUBLIC_URL: devServerUrl(serverPort),
         METRICS_ENABLED: "false",
-        LOCAL_VOICE_LLM_PROVIDER: "local",
+        LOCAL_VOICE_LLM_PROVIDER: "codex",
         LOCAL_LLM_BASE_URL: `http://${localVoiceProxyHost}:12434/v1`,
         LOCAL_LLM_MODEL: "qwen36-35b-awq-general",
-        LOCAL_VOICE_TTS_PROVIDER: "chatterbox_multilingual",
-        LOCAL_TTS_PROVIDER: "chatterbox_multilingual",
+        CODEX_EXEC_MODEL: "gpt-5.3-codex-spark",
+        CODEX_EXEC_REASONING_EFFORT: "medium",
+        CODEX_EXEC_TIMEOUT_MS: "45000",
+        OPENAI_API_BASE_URL: "https://api.openai.com/v1",
+        OPENAI_RESPONSES_MODEL: "gpt-5.3-codex-spark",
+        OPENAI_RESPONSES_REASONING_EFFORT: "high",
+        OPENAI_RESPONSES_MAX_OUTPUT_TOKENS: "4096",
+        LOCAL_VOICE_TTS_PROVIDER: "xai",
+        LOCAL_TTS_PROVIDER: "xai",
         LOCAL_TTS_REQUEST_TIMEOUT_MS: "300000",
         XAI_API_BASE_URL: "https://api.x.ai/v1",
         XAI_RESPONSES_MODEL: "grok-4.20-0309-non-reasoning",
@@ -768,19 +838,23 @@ function buildEnvVars(envDir: string, serverPort: number, expoPort: number): Rec
         CHATTERBOX_MULTILINGUAL_TTS_LANGUAGE: "es",
         CHATTERBOX_MULTILINGUAL_TTS_RESPONSE_FORMAT: "mp3",
         CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH: "/home/op/voxcpm2-server/reference_audio/newlatina_ref.wav",
+        NEUTTS_TTS_BASE_URL: `http://${localVoiceProxyHost}:12438/v1`,
+        NEUTTS_TTS_MODEL: "tts-1",
+        NEUTTS_TTS_VOICE: "mateo",
+        NEUTTS_TTS_RESPONSE_FORMAT: "wav",
         LOCAL_ASR_BASE_URL: `http://${localVoiceProxyHost}:5092/v1`,
         LOCAL_ASR_MODEL: "parakeet-tdt-0.6b-v3",
 
         // App (Expo)
-        EXPO_PUBLIC_SERVER_URL: `http://localhost:${serverPort}`,
-        EXPO_PUBLIC_HAPPY_SERVER_URL: `http://localhost:${serverPort}`,
-        EXPO_PUBLIC_LOG_SERVER_URL: "http://localhost:8787",
+        EXPO_PUBLIC_SERVER_URL: devServerUrl(serverPort),
+        EXPO_PUBLIC_HAPPY_SERVER_URL: devServerUrl(serverPort),
+        EXPO_PUBLIC_LOG_SERVER_URL: DEV_LOG_SERVER_URL,
         EXPO_PUBLIC_LOCAL_VOICE_ENABLED: "true",
         EXPO_PORT: String(expoPort),
 
         // CLI
-        HAPPY_SERVER_URL: `http://localhost:${serverPort}`,
-        HAPPY_WEBAPP_URL: `http://localhost:${expoPort}`,
+        HAPPY_SERVER_URL: devUrl(serverPort),
+        HAPPY_WEBAPP_URL: devWebUrl(expoPort),
         HAPPY_HOME_DIR: path.join(envDir, "cli", "home"),
         HAPPY_PROJECT_DIR: projectDir,
         HAPPY_VARIANT: "dev",
@@ -805,14 +879,25 @@ function buildEnvSh(name: string, envDir: string, serverPort: number, expoPort: 
     lines.push("# Server");
     lines.push(`export HANDY_MASTER_SECRET="${vars.HANDY_MASTER_SECRET}"`);
     lines.push(`export PORT=${vars.PORT}`);
+    lines.push(`export HOST="${vars.HOST}"`);
     lines.push(`export NODE_ENV="${vars.NODE_ENV}"`);
     lines.push(`export DATA_DIR="${vars.DATA_DIR}"`);
     lines.push(`export PGLITE_DIR="${vars.PGLITE_DIR}"`);
     lines.push(`export DATABASE_URL=""`);
+    lines.push(`export PUBLIC_URL="${vars.PUBLIC_URL}"`);
     lines.push(`export METRICS_ENABLED=false`);
     lines.push(`export LOCAL_VOICE_LLM_PROVIDER="${vars.LOCAL_VOICE_LLM_PROVIDER}"`);
     lines.push(`export LOCAL_LLM_BASE_URL="${vars.LOCAL_LLM_BASE_URL}"`);
     lines.push(`export LOCAL_LLM_MODEL="${vars.LOCAL_LLM_MODEL}"`);
+    lines.push(`export CODEX_EXEC_MODEL="${vars.CODEX_EXEC_MODEL}"`);
+    lines.push(`export CODEX_EXEC_REASONING_EFFORT="${vars.CODEX_EXEC_REASONING_EFFORT}"`);
+    lines.push(`export CODEX_EXEC_TIMEOUT_MS="${vars.CODEX_EXEC_TIMEOUT_MS}"`);
+    lines.push(`# export OPENAI_API_KEY="your-openai-api-key"`);
+    lines.push(`# Direct OpenAI provider only; the default Codex provider uses your Codex CLI login.`);
+    lines.push(`export OPENAI_API_BASE_URL="${vars.OPENAI_API_BASE_URL}"`);
+    lines.push(`export OPENAI_RESPONSES_MODEL="${vars.OPENAI_RESPONSES_MODEL}"`);
+    lines.push(`export OPENAI_RESPONSES_REASONING_EFFORT="${vars.OPENAI_RESPONSES_REASONING_EFFORT}"`);
+    lines.push(`export OPENAI_RESPONSES_MAX_OUTPUT_TOKENS="${vars.OPENAI_RESPONSES_MAX_OUTPUT_TOKENS}"`);
     lines.push(`export LOCAL_VOICE_TTS_PROVIDER="${vars.LOCAL_VOICE_TTS_PROVIDER}"`);
     lines.push(`export LOCAL_TTS_PROVIDER="${vars.LOCAL_TTS_PROVIDER}"`);
     lines.push(`export LOCAL_TTS_REQUEST_TIMEOUT_MS="${vars.LOCAL_TTS_REQUEST_TIMEOUT_MS}"`);
@@ -828,6 +913,10 @@ function buildEnvSh(name: string, envDir: string, serverPort: number, expoPort: 
     lines.push(`export CHATTERBOX_MULTILINGUAL_TTS_LANGUAGE="${vars.CHATTERBOX_MULTILINGUAL_TTS_LANGUAGE}"`);
     lines.push(`export CHATTERBOX_MULTILINGUAL_TTS_RESPONSE_FORMAT="${vars.CHATTERBOX_MULTILINGUAL_TTS_RESPONSE_FORMAT}"`);
     lines.push(`export CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH="${vars.CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH}"`);
+    lines.push(`export NEUTTS_TTS_BASE_URL="${vars.NEUTTS_TTS_BASE_URL}"`);
+    lines.push(`export NEUTTS_TTS_MODEL="${vars.NEUTTS_TTS_MODEL}"`);
+    lines.push(`export NEUTTS_TTS_VOICE="${vars.NEUTTS_TTS_VOICE}"`);
+    lines.push(`export NEUTTS_TTS_RESPONSE_FORMAT="${vars.NEUTTS_TTS_RESPONSE_FORMAT}"`);
     lines.push(`export LOCAL_ASR_BASE_URL="${vars.LOCAL_ASR_BASE_URL}"`);
     lines.push(`export LOCAL_ASR_MODEL="${vars.LOCAL_ASR_MODEL}"`);
     lines.push("");
@@ -894,6 +983,10 @@ function buildAuthenticatedWebUrl(
     secret: string,
     options?: { serverUrl?: string; logServerUrl?: string },
 ): string {
+    if (!DEV_LONG_AUTH_URL) {
+        return webBaseUrl.replace(/\/$/, "");
+    }
+
     const webParams = new URLSearchParams({
         dev_token: token,
         dev_secret: Buffer.from(secret, "base64").toString("base64url"),
@@ -960,8 +1053,8 @@ async function commandUp(template: Template, opts?: { noSwitch?: boolean }) {
     const finalConfig = readEnvironmentConfig(envName);
     console.log("");
     console.log(`Environment "${envName}" is up!`);
-    console.log(`  Server: http://localhost:${config.serverPort}`);
-    console.log(`  Web:    http://localhost:${config.expoPort}`);
+    console.log(`  Server: ${devServerUrl(config.serverPort)}`);
+    console.log(`  Web:    ${devWebUrl(config.expoPort)}`);
     console.log(`  Project: ${finalConfig.projectPath}`);
 
     if (finalConfig.authenticatedWebUrl) {

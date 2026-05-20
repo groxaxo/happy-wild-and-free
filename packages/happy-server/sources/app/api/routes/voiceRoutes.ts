@@ -1,5 +1,9 @@
 import { z } from "zod";
+import { spawn } from "child_process";
 import * as crypto from "crypto";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import {
     VoiceAssistantRequestSchema,
     VoiceAssistantResponseSchema,
@@ -22,6 +26,13 @@ const DEFAULT_LOCAL_LLM_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:12434/v1`;
 const DEFAULT_LOCAL_LLM_MODEL = "qwen36-35b-awq-general";
 const DEFAULT_LOCAL_ASR_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:5092/v1`;
 const DEFAULT_LOCAL_ASR_MODEL = "parakeet-tdt-0.6b-v3";
+const DEFAULT_CODEX_EXEC_MODEL = "gpt-5.3-codex-spark";
+const DEFAULT_CODEX_EXEC_REASONING_EFFORT = "high";
+const DEFAULT_CODEX_EXEC_TIMEOUT_MS = 45_000;
+const DEFAULT_OPENAI_API_BASE_URL = "https://api.openai.com/v1";
+const DEFAULT_OPENAI_RESPONSES_MODEL = "gpt-5.3-codex-spark";
+const DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT = "high";
+const DEFAULT_OPENAI_RESPONSES_MAX_OUTPUT_TOKENS = 4096;
 const DEFAULT_XAI_API_BASE_URL = "https://api.x.ai/v1";
 const DEFAULT_XAI_RESPONSES_MODEL = "grok-4.20-0309-non-reasoning";
 const DEFAULT_XAI_RESPONSES_MAX_OUTPUT_TOKENS = 1000000;
@@ -35,6 +46,12 @@ const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_VOICE = "latina";
 const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_LANGUAGE = "es";
 const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_RESPONSE_FORMAT = "mp3";
 const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH = "/home/op/voxcpm2-server/reference_audio/newlatina_ref.wav";
+const DEFAULT_NEUTTS_SPANISH_TTS_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:12438/v1`;
+const DEFAULT_NEUTTS_ENGLISH_TTS_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:12437/v1`;
+const DEFAULT_NEUTTS_TTS_MODEL = "tts-1";
+const DEFAULT_NEUTTS_SPANISH_TTS_VOICE = "mateo";
+const DEFAULT_NEUTTS_ENGLISH_TTS_VOICE = "dave";
+const DEFAULT_NEUTTS_TTS_RESPONSE_FORMAT = "wav";
 const LOCAL_LLM_BUSY_RETRIES = 6;
 const LOCAL_LLM_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_LOCAL_TTS_REQUEST_TIMEOUT_MS = 300_000;
@@ -46,7 +63,8 @@ type VoiceAssistantRequest = z.infer<typeof VoiceAssistantRequestSchema>;
 type VoiceAssistantResponse = z.infer<typeof VoiceAssistantResponseSchema>;
 type VoiceAssistantMessage = VoiceAssistantRequest["messages"][number];
 type VoiceSpeechProvider = z.infer<typeof VoiceSpeechProviderSchema>;
-type VoiceLlmProvider = "xai" | "local";
+type VoiceLlmProvider = "codex" | "openai" | "xai" | "local";
+type OpenAiReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 function deriveElevenUserId(happyUserId: string): string {
     const hmac = crypto.createHmac("sha256", process.env.HANDY_MASTER_SECRET!);
@@ -129,6 +147,72 @@ function getXaiApiKey(): string {
     return apiKey;
 }
 
+function readCodexOpenAiApiKey(): string | null {
+    if (process.env.NODE_ENV === "production") {
+        return null;
+    }
+
+    const authPath = process.env.CODEX_AUTH_FILE || path.join(os.homedir(), ".codex", "auth.json");
+    try {
+        const parsed = JSON.parse(fs.readFileSync(authPath, "utf-8")) as { OPENAI_API_KEY?: unknown };
+        return typeof parsed.OPENAI_API_KEY === "string" && parsed.OPENAI_API_KEY.trim()
+            ? parsed.OPENAI_API_KEY.trim()
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function getOpenAiApiKey(): string {
+    const apiKey = process.env.OPENAI_API_KEY?.trim()
+        || process.env.CODEX_OPENAI_API_KEY?.trim()
+        || readCodexOpenAiApiKey();
+    if (!apiKey) {
+        throw new Error("OPENAI_API_KEY not configured");
+    }
+    return apiKey;
+}
+
+function getOpenAiApiBaseUrl(): string {
+    return (process.env.OPENAI_API_BASE_URL || DEFAULT_OPENAI_API_BASE_URL).replace(/\/$/, "");
+}
+
+function getOpenAiResponsesModel(): string {
+    return process.env.OPENAI_RESPONSES_MODEL || DEFAULT_OPENAI_RESPONSES_MODEL;
+}
+
+function getOpenAiResponsesReasoningEffort(): OpenAiReasoningEffort {
+    const raw = process.env.OPENAI_RESPONSES_REASONING_EFFORT;
+    if (raw === "low" || raw === "medium" || raw === "high" || raw === "xhigh") {
+        return raw;
+    }
+    return DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT;
+}
+
+function getOpenAiResponsesMaxOutputTokens(): number {
+    return getPositiveIntegerEnv("OPENAI_RESPONSES_MAX_OUTPUT_TOKENS", DEFAULT_OPENAI_RESPONSES_MAX_OUTPUT_TOKENS);
+}
+
+function getCodexExecCommand(): string {
+    return process.env.CODEX_EXEC_COMMAND || "codex";
+}
+
+function getCodexExecModel(): string {
+    return process.env.CODEX_EXEC_MODEL || DEFAULT_CODEX_EXEC_MODEL;
+}
+
+function getCodexExecReasoningEffort(): OpenAiReasoningEffort {
+    const raw = process.env.CODEX_EXEC_REASONING_EFFORT;
+    if (raw === "low" || raw === "medium" || raw === "high" || raw === "xhigh") {
+        return raw;
+    }
+    return DEFAULT_CODEX_EXEC_REASONING_EFFORT;
+}
+
+function getCodexExecTimeoutMs(): number {
+    return getPositiveIntegerEnv("CODEX_EXEC_TIMEOUT_MS", DEFAULT_CODEX_EXEC_TIMEOUT_MS);
+}
+
 function getXaiApiBaseUrl(): string {
     return (process.env.XAI_API_BASE_URL || DEFAULT_XAI_API_BASE_URL).replace(/\/$/, "");
 }
@@ -159,11 +243,23 @@ function getDefaultLocalTtsProvider(): VoiceSpeechProvider {
     const parsed = VoiceSpeechProviderSchema.safeParse(
         process.env.LOCAL_VOICE_TTS_PROVIDER || process.env.LOCAL_TTS_PROVIDER,
     );
-    return parsed.success ? parsed.data : "chatterbox_multilingual";
+    return parsed.success ? parsed.data : "xai";
 }
 
 function getLocalVoiceLlmProvider(): VoiceLlmProvider {
-    return process.env.LOCAL_VOICE_LLM_PROVIDER === "xai" ? "xai" : "local";
+    if (process.env.LOCAL_VOICE_LLM_PROVIDER === "codex") {
+        return "codex";
+    }
+    if (process.env.LOCAL_VOICE_LLM_PROVIDER === "xai") {
+        return "xai";
+    }
+    if (process.env.LOCAL_VOICE_LLM_PROVIDER === "local") {
+        return "local";
+    }
+    if (process.env.LOCAL_VOICE_LLM_PROVIDER === "openai") {
+        return "openai";
+    }
+    return "codex";
 }
 
 function getLocalLlmBaseUrl(): string {
@@ -189,6 +285,13 @@ function getXaiTtsLanguage(language?: string | null): string {
 function getXaiJsonHeaders(): Record<string, string> {
     return {
         "Authorization": `Bearer ${getXaiApiKey()}`,
+        "Content-Type": "application/json",
+    };
+}
+
+function getOpenAiJsonHeaders(): Record<string, string> {
+    return {
+        "Authorization": `Bearer ${getOpenAiApiKey()}`,
         "Content-Type": "application/json",
     };
 }
@@ -296,6 +399,26 @@ function getChatterboxMultilingualTtsResponseFormat(): "mp3" | "wav" {
     return process.env.CHATTERBOX_MULTILINGUAL_TTS_RESPONSE_FORMAT === "wav" ? "wav" : DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_RESPONSE_FORMAT;
 }
 
+function getNeuttsTtsBaseUrl(language?: string | null): string {
+    const normalizedLanguage = normalizeChatterboxLanguage(language || "es");
+    const fallback = normalizedLanguage === "en" ? DEFAULT_NEUTTS_ENGLISH_TTS_BASE_URL : DEFAULT_NEUTTS_SPANISH_TTS_BASE_URL;
+    return (process.env.NEUTTS_TTS_BASE_URL || fallback).replace(/\/$/, "");
+}
+
+function getNeuttsTtsModel(): string {
+    return process.env.NEUTTS_TTS_MODEL || DEFAULT_NEUTTS_TTS_MODEL;
+}
+
+function getNeuttsTtsVoice(language?: string | null): string {
+    const normalizedLanguage = normalizeChatterboxLanguage(language || "es");
+    const fallback = normalizedLanguage === "en" ? DEFAULT_NEUTTS_ENGLISH_TTS_VOICE : DEFAULT_NEUTTS_SPANISH_TTS_VOICE;
+    return process.env.NEUTTS_TTS_VOICE || fallback;
+}
+
+function getNeuttsTtsResponseFormat(): "wav" {
+    return DEFAULT_NEUTTS_TTS_RESPONSE_FORMAT;
+}
+
 function normalizeChatterboxLanguage(language: string): string {
     const lower = language.trim().toLowerCase();
     if (!lower || lower === "auto") {
@@ -374,6 +497,30 @@ async function fetchXaiWithRetries(path: string, init: RequestInit): Promise<Res
     }
 
     throw lastError instanceof Error ? lastError : new Error("xAI request failed");
+}
+
+async function fetchOpenAiWithRetries(path: string, init: RequestInit): Promise<Response> {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < XAI_REQUEST_RETRIES; attempt++) {
+        try {
+            const response = await fetch(`${getOpenAiApiBaseUrl()}${path}`, init);
+            if (!isTransientXaiStatus(response.status) || attempt === XAI_REQUEST_RETRIES - 1) {
+                return response;
+            }
+
+            await response.arrayBuffer().catch(() => undefined);
+        } catch (error) {
+            lastError = error;
+            if (attempt === XAI_REQUEST_RETRIES - 1) {
+                throw error;
+            }
+        }
+
+        await sleep(500 * (2 ** attempt));
+    }
+
+    throw lastError instanceof Error ? lastError : new Error("OpenAI request failed");
 }
 
 function toXaiResponsesInputMessage(message: VoiceAssistantMessage): { role: "system" | "user" | "assistant"; content: string } {
@@ -565,6 +712,25 @@ async function readXaiResponsesStream(response: Response): Promise<string> {
     return state.completedText || state.text;
 }
 
+function extractOpenAiToolCalls(raw: unknown): VoiceAssistantResponse["message"]["toolCalls"] {
+    if (!isRecord(raw) || !Array.isArray(raw.output)) {
+        return [];
+    }
+
+    const toolCalls: VoiceAssistantResponse["message"]["toolCalls"] = [];
+    for (const item of raw.output) {
+        if (!isRecord(item) || item.type !== "function_call") {
+            continue;
+        }
+        toolCalls.push({
+            id: typeof item.call_id === "string" ? item.call_id : typeof item.id === "string" ? item.id : "",
+            name: typeof item.name === "string" ? item.name : "",
+            arguments: typeof item.arguments === "string" ? item.arguments : "{}",
+        });
+    }
+    return toolCalls;
+}
+
 async function readXaiResponsesText(response: Response): Promise<string> {
     const contentType = response.headers.get("content-type") || "";
     if (contentType.includes("text/event-stream")) {
@@ -572,6 +738,144 @@ async function readXaiResponsesText(response: Response): Promise<string> {
     }
 
     return extractXaiOutputText(await response.json());
+}
+
+function formatCodexMessage(message: VoiceAssistantMessage): string {
+    const role = message.role.toUpperCase();
+    if (message.role === "tool") {
+        const label = message.name || message.toolCallId || "tool";
+        return `TOOL RESULT (${label}):\n${message.content}`;
+    }
+    return `${role}:\n${message.content}`;
+}
+
+function buildCodexNarrationPrompt(body: VoiceAssistantRequest): string {
+    return [
+        "You are running as Happy's web voice narrator.",
+        "Return only the final spoken narration text. Do not use markdown, code blocks, or tool calls.",
+        ...body.messages.map(formatCodexMessage),
+    ].join("\n\n");
+}
+
+function runCodexExec(prompt: string, outputPath: string): Promise<{ stdout: string; stderr: string }> {
+    const args = [
+        "exec",
+        "--model", getCodexExecModel(),
+        "-c", `model_reasoning_effort=${JSON.stringify(getCodexExecReasoningEffort())}`,
+        "-c", "approval_policy=\"never\"",
+        "--sandbox", "read-only",
+        "--skip-git-repo-check",
+        "--ignore-rules",
+        "--ephemeral",
+        "--output-last-message", outputPath,
+        "-",
+    ];
+
+    return new Promise((resolve, reject) => {
+        const child = spawn(getCodexExecCommand(), args, {
+            cwd: os.tmpdir(),
+            env: process.env,
+            stdio: ["pipe", "pipe", "pipe"],
+        });
+        const timeout = setTimeout(() => {
+            child.kill("SIGTERM");
+            reject(new Error(`Codex narrator timed out after ${getCodexExecTimeoutMs()}ms`));
+        }, getCodexExecTimeoutMs());
+        const stdout: Buffer[] = [];
+        const stderr: Buffer[] = [];
+
+        child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+        child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+        child.on("error", (error) => {
+            clearTimeout(timeout);
+            reject(error);
+        });
+        child.on("close", (code, signal) => {
+            clearTimeout(timeout);
+            const stdoutText = Buffer.concat(stdout).toString("utf-8");
+            const stderrText = Buffer.concat(stderr).toString("utf-8");
+            if (code === 0) {
+                resolve({ stdout: stdoutText, stderr: stderrText });
+                return;
+            }
+            reject(new Error(`Codex narrator failed (${signal || code}): ${stderrText || stdoutText}`));
+        });
+
+        child.stdin.end(prompt);
+    });
+}
+
+async function requestCodexAssistantCompletion(body: VoiceAssistantRequest): Promise<VoiceAssistantResponse> {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "happy-narrator-"));
+    const outputPath = path.join(tmpDir, "last-message.txt");
+    try {
+        const result = await runCodexExec(buildCodexNarrationPrompt(body), outputPath);
+        const content = (fs.existsSync(outputPath)
+            ? fs.readFileSync(outputPath, "utf-8")
+            : result.stdout
+        ).trim();
+        if (!content) {
+            throw new Error("Codex returned an empty narration response");
+        }
+
+        return VoiceAssistantResponseSchema.parse({
+            message: {
+                role: "assistant",
+                content,
+                toolCalls: [],
+            },
+        });
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+}
+
+async function requestOpenAiAssistantCompletion(body: VoiceAssistantRequest): Promise<VoiceAssistantResponse> {
+    const tools = body.tools ?? [];
+    const payload: Record<string, unknown> = {
+        model: getOpenAiResponsesModel(),
+        max_output_tokens: getOpenAiResponsesMaxOutputTokens(),
+        store: false,
+        input: body.messages.map(toXaiResponsesInputMessage),
+        reasoning: {
+            effort: getOpenAiResponsesReasoningEffort(),
+        },
+    };
+
+    if (tools.length > 0) {
+        payload.tools = tools.map((tool) => ({
+            type: "function",
+            name: tool.function.name,
+            description: tool.function.description,
+            parameters: tool.function.parameters,
+        }));
+        payload.tool_choice = "auto";
+        payload.parallel_tool_calls = false;
+    }
+
+    const response = await fetchOpenAiWithRetries("/responses", {
+        method: "POST",
+        headers: getOpenAiJsonHeaders(),
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        throw new Error(`[${response.status}] ${await response.text()}`);
+    }
+
+    const raw = await response.json() as unknown;
+    const content = extractXaiOutputText(raw).trim();
+    if (!content) {
+        throw new Error("OpenAI returned an empty narration response");
+    }
+
+    return VoiceAssistantResponseSchema.parse({
+        message: {
+            role: "assistant",
+            content,
+            toolCalls: extractOpenAiToolCalls(raw),
+        },
+    });
 }
 
 async function requestXaiAssistantCompletion(body: VoiceAssistantRequest): Promise<VoiceAssistantResponse> {
@@ -683,11 +987,16 @@ async function requestProxyAssistantCompletion(body: VoiceAssistantRequest): Pro
 }
 
 async function requestLocalAssistantCompletion(body: VoiceAssistantRequest): Promise<VoiceAssistantResponse> {
-    if (getLocalVoiceLlmProvider() === "xai") {
-        return requestXaiAssistantCompletion(body);
+    switch (getLocalVoiceLlmProvider()) {
+        case "codex":
+            return requestCodexAssistantCompletion(body);
+        case "openai":
+            return requestOpenAiAssistantCompletion(body);
+        case "xai":
+            return requestXaiAssistantCompletion(body);
+        case "local":
+            return requestProxyAssistantCompletion(body);
     }
-
-    return requestProxyAssistantCompletion(body);
 }
 
 async function requestXaiSpeech(input: string, language?: string | null): Promise<{ audioBuffer: Buffer; contentType: string }> {
@@ -706,6 +1015,11 @@ async function requestXaiSpeech(input: string, language?: string | null): Promis
             text,
             voice_id: getXaiTtsVoice(),
             language: getXaiTtsLanguage(language),
+            output_format: {
+                codec: "mp3",
+                sample_rate: 44100,
+                bit_rate: 192000,
+            },
         }),
     });
 
@@ -750,6 +1064,35 @@ async function requestChatterboxMultilingualSpeech(input: string, language?: str
     };
 }
 
+async function requestNeuttsSpeech(input: string, language?: string | null): Promise<{ audioBuffer: Buffer; contentType: string }> {
+    const text = input.trim();
+    if (!text) {
+        throw new Error("Speech input is empty");
+    }
+
+    const response = await fetchWithTimeout(`${getNeuttsTtsBaseUrl(language)}/audio/speech`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            model: getNeuttsTtsModel(),
+            voice: getNeuttsTtsVoice(language),
+            input: text,
+            response_format: getNeuttsTtsResponseFormat(),
+        }),
+    }, getLocalTtsRequestTimeoutMs());
+
+    if (!response.ok) {
+        throw new Error(`[${response.status}] ${await response.text()}`);
+    }
+
+    return {
+        audioBuffer: Buffer.from(await response.arrayBuffer()),
+        contentType: response.headers.get("content-type") || "audio/wav",
+    };
+}
+
 async function requestLocalSpeech(
     input: string,
     provider: VoiceSpeechProvider,
@@ -760,6 +1103,8 @@ async function requestLocalSpeech(
             return requestXaiSpeech(input, language);
         case "chatterbox_multilingual":
             return requestChatterboxMultilingualSpeech(input, language);
+        case "neutts":
+            return requestNeuttsSpeech(input, language);
     }
 
     throw new Error(`Unsupported speech provider: ${provider}`);

@@ -1,6 +1,6 @@
 import { RoundButton } from "@/components/RoundButton";
 import { useAuth } from "@/auth/AuthContext";
-import { Text, View, Image, Platform } from "react-native";
+import { Text, View, Image, Platform, ActivityIndicator } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as React from 'react';
 import { encodeBase64 } from "@/encryption/base64";
@@ -14,6 +14,16 @@ import { trackAccountCreated, trackAccountRestored } from '@/track';
 import { HomeHeaderNotAuth } from "@/components/HomeHeader";
 import { MainView } from "@/components/MainView";
 import { t } from '@/text';
+
+/**
+ * When EXPO_PUBLIC_AUTO_CREATE_ACCOUNT is "true" (the default for this fork),
+ * the web app silently creates an account on first visit so users are never
+ * shown the "Login with mobile app" screen.  Credentials are stored in
+ * localStorage and reused on every subsequent visit.
+ */
+const AUTO_CREATE_ACCOUNT =
+    Platform.OS === 'web' &&
+    (process.env.EXPO_PUBLIC_AUTO_CREATE_ACCOUNT ?? 'true') === 'true';
 
 export default function Home() {
     const auth = useAuth();
@@ -35,6 +45,8 @@ function NotAuthenticated() {
     const router = useRouter();
     const isLandscape = useIsLandscape();
     const insets = useSafeAreaInsets();
+    const [autoCreating, setAutoCreating] = React.useState(AUTO_CREATE_ACCOUNT);
+    const [autoCreateError, setAutoCreateError] = React.useState<string | null>(null);
 
     const createAccount = async () => {
         try {
@@ -46,7 +58,31 @@ function NotAuthenticated() {
             }
         } catch (error) {
             console.error('Error creating account', error);
+            throw error;
         }
+    }
+
+    // On web (self-hosted fork), auto-create an account the first time the app
+    // is opened in a browser that has no stored credentials.
+    React.useEffect(() => {
+        if (!AUTO_CREATE_ACCOUNT) return;
+        createAccount().catch((err) => {
+            setAutoCreating(false);
+            setAutoCreateError(err?.message ?? 'Could not connect to server');
+        });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // While auto-creating, show a minimal loading screen instead of the login UI
+    if (autoCreating && !autoCreateError) {
+        return (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.surface }}>
+                <ActivityIndicator size="large" color={theme.colors.button.primary.background} />
+                <Text style={{ marginTop: 16, color: theme.colors.textSecondary, ...Typography.default() }}>
+                    Setting up...
+                </Text>
+            </View>
+        );
     }
 
     const portraitLayout = (
@@ -62,6 +98,11 @@ function NotAuthenticated() {
             <Text style={styles.subtitle}>
                 {t('welcome.subtitle')}
             </Text>
+            {autoCreateError ? (
+                <Text style={[styles.subtitle, { color: theme.colors.status.error, marginBottom: 16 }]}>
+                    {autoCreateError}
+                </Text>
+            ) : null}
             {Platform.OS !== 'android' && Platform.OS !== 'ios' ? (
                 <>
                     <View style={styles.buttonContainer}>
@@ -123,6 +164,11 @@ function NotAuthenticated() {
                     <Text style={styles.landscapeSubtitle}>
                         {t('welcome.subtitle')}
                     </Text>
+                    {autoCreateError ? (
+                        <Text style={[styles.landscapeSubtitle, { color: theme.colors.status.error, marginBottom: 4 }]}>
+                            {autoCreateError}
+                        </Text>
+                    ) : null}
                     {Platform.OS !== 'android' && Platform.OS !== 'ios'
                         ? (<>
                             <View style={styles.landscapeButtonContainer}>

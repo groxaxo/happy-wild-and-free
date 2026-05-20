@@ -101,6 +101,26 @@ function HorizontalSafeAreaWrapper({ children }: { children: React.ReactNode }) 
 let lock = new AsyncLock();
 let loaded = false;
 
+const fontAssets = {
+    // Keep existing font
+    SpaceMono: require('@/assets/fonts/SpaceMono-Regular.ttf'),
+
+    // IBM Plex Sans family
+    'IBMPlexSans-Regular': require('@/assets/fonts/IBMPlexSans-Regular.ttf'),
+    'IBMPlexSans-Italic': require('@/assets/fonts/IBMPlexSans-Italic.ttf'),
+    'IBMPlexSans-SemiBold': require('@/assets/fonts/IBMPlexSans-SemiBold.ttf'),
+
+    // IBM Plex Mono family
+    'IBMPlexMono-Regular': require('@/assets/fonts/IBMPlexMono-Regular.ttf'),
+    'IBMPlexMono-Italic': require('@/assets/fonts/IBMPlexMono-Italic.ttf'),
+    'IBMPlexMono-SemiBold': require('@/assets/fonts/IBMPlexMono-SemiBold.ttf'),
+
+    // Bricolage Grotesque
+    'BricolageGrotesque-Bold': require('@/assets/fonts/BricolageGrotesque-Bold.ttf'),
+
+    ...FontAwesome.font,
+};
+
 function stringifyNotificationPayload(value: unknown): string {
     try {
         const serialized = JSON.stringify(value, null, 2);
@@ -116,60 +136,15 @@ async function loadFonts() {
             return;
         }
         loaded = true;
-        // Check if running in Tauri
-        const isTauri = Platform.OS === 'web' &&
-            typeof window !== 'undefined' &&
-            (window as any).__TAURI_INTERNALS__ !== undefined;
 
-        if (!isTauri) {
-            // Normal font loading for non-Tauri environments (native and regular web)
-            await Fonts.loadAsync({
-                // Keep existing font
-                SpaceMono: require('@/assets/fonts/SpaceMono-Regular.ttf'),
-
-                // IBM Plex Sans family
-                'IBMPlexSans-Regular': require('@/assets/fonts/IBMPlexSans-Regular.ttf'),
-                'IBMPlexSans-Italic': require('@/assets/fonts/IBMPlexSans-Italic.ttf'),
-                'IBMPlexSans-SemiBold': require('@/assets/fonts/IBMPlexSans-SemiBold.ttf'),
-
-                // IBM Plex Mono family  
-                'IBMPlexMono-Regular': require('@/assets/fonts/IBMPlexMono-Regular.ttf'),
-                'IBMPlexMono-Italic': require('@/assets/fonts/IBMPlexMono-Italic.ttf'),
-                'IBMPlexMono-SemiBold': require('@/assets/fonts/IBMPlexMono-SemiBold.ttf'),
-
-                // Bricolage Grotesque  
-                'BricolageGrotesque-Bold': require('@/assets/fonts/BricolageGrotesque-Bold.ttf'),
-
-                ...FontAwesome.font,
+        if (Platform.OS === 'web') {
+            // expo-font injects @font-face immediately, then waits on FontFaceObserver.
+            // That observer can time out behind tunnels/proxies, so do not block startup.
+            void Fonts.loadAsync(fontAssets).catch((error) => {
+                console.warn('Font loading failed; continuing with fallback fonts:', error);
             });
         } else {
-            // For Tauri, skip Font Face Observer as fonts are loaded via CSS
-            console.log('Do not wait for fonts to load');
-            (async () => {
-                try {
-                    await Fonts.loadAsync({
-                        // Keep existing font
-                        SpaceMono: require('@/assets/fonts/SpaceMono-Regular.ttf'),
-
-                        // IBM Plex Sans family
-                        'IBMPlexSans-Regular': require('@/assets/fonts/IBMPlexSans-Regular.ttf'),
-                        'IBMPlexSans-Italic': require('@/assets/fonts/IBMPlexSans-Italic.ttf'),
-                        'IBMPlexSans-SemiBold': require('@/assets/fonts/IBMPlexSans-SemiBold.ttf'),
-
-                        // IBM Plex Mono family  
-                        'IBMPlexMono-Regular': require('@/assets/fonts/IBMPlexMono-Regular.ttf'),
-                        'IBMPlexMono-Italic': require('@/assets/fonts/IBMPlexMono-Italic.ttf'),
-                        'IBMPlexMono-SemiBold': require('@/assets/fonts/IBMPlexMono-SemiBold.ttf'),
-
-                        // Bricolage Grotesque  
-                        'BricolageGrotesque-Bold': require('@/assets/fonts/BricolageGrotesque-Bold.ttf'),
-
-                        ...FontAwesome.font,
-                    });
-                } catch (e) {
-                    // Ignore
-                }
-            })();
+            await Fonts.loadAsync(fontAssets);
         }
     });
 }
@@ -188,8 +163,29 @@ function getDevEnvironmentCredentials(): AuthCredentials | null {
     return { token, secret };
 }
 
+/**
+ * Production-ready pre-configured credentials for self-hosted deployments.
+ * Set EXPO_PUBLIC_DEFAULT_TOKEN and EXPO_PUBLIC_DEFAULT_SECRET at build time
+ * to have all web visitors automatically authenticated as the same account.
+ * These take priority over stored credentials only when the stored ones are absent.
+ */
+function getDefaultCredentials(): AuthCredentials | null {
+    if (Platform.OS !== 'web') {
+        return null;
+    }
+    const token = process.env.EXPO_PUBLIC_DEFAULT_TOKEN;
+    const secret = process.env.EXPO_PUBLIC_DEFAULT_SECRET;
+    if (!token || !secret) {
+        return null;
+    }
+    return { token, secret };
+}
+
 function getDevWebQueryCredentials(): AuthCredentials | null {
-    if (!__DEV__ || Platform.OS !== 'web' || typeof window === 'undefined') {
+    // Accept ?dev_token / ?dev_secret in both dev and production mode so that
+    // self-hosted deployments can bootstrap localStorage credentials by visiting
+    // a URL with the params once (params are stripped from the URL after saving).
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
         return null;
     }
 
@@ -209,8 +205,14 @@ function getDevWebQueryServerConfig(): { serverUrl?: string; logServerUrl?: stri
     }
 
     const params = new URLSearchParams(window.location.search);
-    const serverUrl = params.get('server_url') ?? undefined;
+    const explicitServerUrl = params.get('server_url') ?? undefined;
     const logServerUrl = params.get('log_server_url') ?? undefined;
+    const shouldUseSameOriginServer =
+        window.location.protocol === 'https:'
+        && !['localhost', '127.0.0.1'].includes(window.location.hostname)
+        && window.location.hostname.endsWith('.ts.net');
+    const serverUrl = explicitServerUrl ?? (shouldUseSameOriginServer ? window.location.origin : undefined);
+
     if (!serverUrl && !logServerUrl) {
         return null;
     }
@@ -254,6 +256,7 @@ export default function RootLayout() {
 
                 let credentials = await TokenStorage.getCredentials();
                 const devCredentials = getDevWebQueryCredentials() ?? getDevEnvironmentCredentials();
+                const defaultCredentials = !credentials ? getDefaultCredentials() : null;
                 const devServerConfig = getDevWebQueryServerConfig();
 
                 if (devCredentials) {
@@ -269,6 +272,14 @@ export default function RootLayout() {
 
                     if (Platform.OS === 'web' && typeof window !== 'undefined') {
                         window.history.replaceState({}, '', window.location.pathname);
+                    }
+                } else if (defaultCredentials) {
+                    // Pre-configured production credentials (self-hosted fork).
+                    // Only applied when no account is already stored so that a user who
+                    // created their own account isn't silently logged out.
+                    const saved = await TokenStorage.setCredentials(defaultCredentials);
+                    if (saved) {
+                        credentials = defaultCredentials;
                     }
                 }
 

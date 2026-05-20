@@ -3,6 +3,9 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
+      "@slopus/happy-wire": [
+        "../happy-wire/src/index.ts"
+      ],
       "@/*": [
         "./sources/*"
       ],

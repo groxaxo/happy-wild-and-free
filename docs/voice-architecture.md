@@ -156,25 +156,32 @@ logic, but the audio/text providers are split across Happy server proxy routes:
 | Step | Route | Default local backend |
 |------|-------|-----------------------|
 | User speech to text | `POST /v1/voice/assistant/transcriptions` | `LOCAL_ASR_BASE_URL` (`http://100.85.200.51:5092/v1`) |
-| Narration text | `POST /v1/voice/assistant/chat` | `LOCAL_LLM_BASE_URL` (`http://100.85.200.51:12434/v1`, `qwen36-35b-awq-general`) |
-| Narration speech | `POST /v1/voice/assistant/speech` | Chatterbox multilingual (`http://100.85.200.51:8020/v1`) |
+| Narration text | `POST /v1/voice/assistant/chat` | Codex CLI (`gpt-5.3-codex-spark`, reasoning `high`) |
+| Narration speech | `POST /v1/voice/assistant/speech` | xAI Grok TTS (`https://api.x.ai/v1/tts`) |
 
 Local voice settings live under Settings → Voice → Local Speech:
 
 - **Input Provider** chooses browser speech recognition or local ASR.
-- **Speech Provider** chooses xAI Grok TTS or Chatterbox multilingual TTS.
+- **Speech Provider** is routed through xAI Grok TTS for local web playback.
 
 The server defaults are configured with:
 
-- `LOCAL_VOICE_LLM_PROVIDER=local`
+- `LOCAL_VOICE_LLM_PROVIDER=codex`
+- `CODEX_EXEC_MODEL=gpt-5.3-codex-spark`
+- `CODEX_EXEC_REASONING_EFFORT=high`
+- `CODEX_EXEC_TIMEOUT_MS`
+- `OPENAI_API_KEY` when `LOCAL_VOICE_LLM_PROVIDER=openai`
+- `OPENAI_API_BASE_URL`
+- `OPENAI_RESPONSES_MODEL=gpt-5.3-codex-spark`
+- `OPENAI_RESPONSES_REASONING_EFFORT=high`
+- `OPENAI_RESPONSES_MAX_OUTPUT_TOKENS`
 - `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL`
-- `LOCAL_VOICE_TTS_PROVIDER`
+- `LOCAL_VOICE_TTS_PROVIDER=xai`
 - `LOCAL_TTS_REQUEST_TIMEOUT_MS`
 - `CHATTERBOX_MULTILINGUAL_TTS_BASE_URL`, `CHATTERBOX_MULTILINGUAL_TTS_MODEL`, `CHATTERBOX_MULTILINGUAL_TTS_VOICE`, `CHATTERBOX_MULTILINGUAL_TTS_LANGUAGE`, `CHATTERBOX_MULTILINGUAL_TTS_AUDIO_PROMPT_PATH`
 - `LOCAL_ASR_BASE_URL`, `LOCAL_ASR_MODEL`
 
-`XAI_API_KEY` is only required when the narrator or speech provider is switched
-back to xAI.
+`XAI_API_KEY` is required on the Happy server for local web speech playback.
 
 ## Lifecycle
 

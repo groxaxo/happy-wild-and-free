@@ -19,11 +19,10 @@ import { trackPaywallButtonClicked } from '@/track';
 import { getVoiceExperimentStatus, getVoiceUpsellVariantLabel } from '@/realtime/voiceExperiment';
 import { getVoiceLocalCounters, resetVoiceLocalCounters } from '@/sync/persistence';
 import { config } from '@/config';
-import type { VoiceAsrProvider, VoiceSpeechProvider } from '@slopus/happy-wire';
+import type { VoiceAsrProvider } from '@slopus/happy-wire';
 
-const VOICE_TTS_PROVIDER_LABELS: Record<VoiceSpeechProvider, string> = {
+const VOICE_TTS_PROVIDER_LABELS = {
     xai: 'xAI Grok',
-    chatterbox_multilingual: 'Chatterbox Multilingual',
 };
 
 const VOICE_ASR_PROVIDER_LABELS: Record<VoiceAsrProvider, string> = {
@@ -44,7 +43,6 @@ export default React.memo(function VoiceSettingsScreen() {
     const [voiceCustomAgentId, setVoiceCustomAgentId] = useSettingMutable('voiceCustomAgentId');
     const [voiceBypassToken, setVoiceBypassToken] = useSettingMutable('voiceBypassToken');
     const [voiceUpsellOverride, setVoiceUpsellOverride] = useLocalSettingMutable('voiceUpsellOverride');
-    const [voiceTtsProvider, setVoiceTtsProvider] = useLocalSettingMutable('voiceTtsProvider');
     const [voiceAsrProvider, setVoiceAsrProvider] = useLocalSettingMutable('voiceAsrProvider');
     const experiments = useSetting('experiments');
     const devModeEnabled = __DEV__ || useLocalSetting('devModeEnabled');
@@ -105,18 +103,6 @@ export default React.memo(function VoiceSettingsScreen() {
             ],
         );
     }, [setVoiceUpsellOverride]);
-
-    const handleVoiceTtsProvider = React.useCallback(() => {
-        Modal.alert(
-            'Speech Provider',
-            'Choose the text-to-speech provider used for local web voice playback.',
-            [
-                { text: VOICE_TTS_PROVIDER_LABELS.xai, onPress: () => setVoiceTtsProvider('xai') },
-                { text: VOICE_TTS_PROVIDER_LABELS.chatterbox_multilingual, onPress: () => setVoiceTtsProvider('chatterbox_multilingual') },
-                { text: t('common.cancel'), style: 'cancel' },
-            ],
-        );
-    }, [setVoiceTtsProvider]);
 
     const handleVoiceAsrProvider = React.useCallback(() => {
         Modal.alert(
@@ -276,10 +262,10 @@ export default React.memo(function VoiceSettingsScreen() {
                     />
                     <Item
                         title="Speech Provider"
-                        subtitle="Choose the local text-to-speech backend"
-                        detail={VOICE_TTS_PROVIDER_LABELS[voiceTtsProvider]}
+                        subtitle="Local web playback is routed through xAI"
+                        detail={VOICE_TTS_PROVIDER_LABELS.xai}
                         icon={<Ionicons name="volume-high-outline" size={29} color="#34C759" />}
-                        onPress={handleVoiceTtsProvider}
+                        showChevron={false}
                     />
                 </ItemGroup>
             )}

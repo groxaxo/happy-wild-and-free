@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "start": "expo start",
+    "start:https": "expo start --https",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "ios:connected-device": "pnpm ios -d",
