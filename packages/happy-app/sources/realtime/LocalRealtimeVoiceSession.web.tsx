@@ -64,7 +64,7 @@ declare global {
 }
 
 const LOCAL_NARRATION_SYSTEM_PROMPT = [
-    'You are Happy\'s local narration voice for the user\'s coding session.',
+    'You are Huppie\'s local narration voice for the user\'s coding session.',
     'The coding work itself is performed by the coding session, not by you.',
     'You only narrate already-decided events and confirmations.',
     'Rules:',

@@ -437,7 +437,7 @@ class Sync {
             await Notifications.scheduleNotificationAsync({
                 content: {
                     title: 'Message failed',
-                    body: 'A message failed to send while the app was in background. Open Happy and retry.',
+                    body: 'A message failed to send while the app was in background. Open Huppie and retry.',
                     sound: true
                 },
                 trigger: null

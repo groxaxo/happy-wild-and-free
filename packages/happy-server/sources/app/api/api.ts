@@ -62,7 +62,7 @@ export async function startApi(opts: StartApiOptions = {}) {
     // When serving a static webapp, @fastify/static handles `/` via its index.
     if (!opts.staticDir) {
         app.get('/', function (request, reply) {
-            reply.send('Welcome to Happy Server!');
+            reply.send('Welcome to Huppie Server!');
         });
     }
 
