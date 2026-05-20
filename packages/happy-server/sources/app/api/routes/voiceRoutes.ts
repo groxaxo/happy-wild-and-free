@@ -40,6 +40,7 @@ const DEFAULT_XAI_TTS_VOICE = "eve";
 const DEFAULT_XAI_TTS_LANGUAGE = "auto";
 const XAI_TTS_MAX_INPUT_CHARS = 15000;
 const XAI_REQUEST_RETRIES = 3;
+const OPENAI_REQUEST_RETRIES = 3;
 const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_BASE_URL = `http://${LOCAL_VOICE_PROXY_HOST}:8020/v1`;
 const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_MODEL = "tts-1-es";
 const DEFAULT_CHATTERBOX_MULTILINGUAL_TTS_VOICE = "latina";
@@ -351,7 +352,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
     }
 }
 
-function isTransientXaiStatus(status: number): boolean {
+function isTransientStatus(status: number): boolean {
     return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
@@ -496,7 +497,7 @@ async function fetchXaiWithRetries(path: string, init: RequestInit): Promise<Res
     for (let attempt = 0; attempt < XAI_REQUEST_RETRIES; attempt++) {
         try {
             const response = await fetch(`${getXaiApiBaseUrl()}${path}`, init);
-            if (!isTransientXaiStatus(response.status) || attempt === XAI_REQUEST_RETRIES - 1) {
+            if (!isTransientStatus(response.status) || attempt === XAI_REQUEST_RETRIES - 1) {
                 return response;
             }
 
@@ -517,17 +518,17 @@ async function fetchXaiWithRetries(path: string, init: RequestInit): Promise<Res
 async function fetchOpenAiWithRetries(path: string, init: RequestInit): Promise<Response> {
     let lastError: unknown;
 
-    for (let attempt = 0; attempt < XAI_REQUEST_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < OPENAI_REQUEST_RETRIES; attempt++) {
         try {
             const response = await fetch(`${getOpenAiApiBaseUrl()}${path}`, init);
-            if (!isTransientXaiStatus(response.status) || attempt === XAI_REQUEST_RETRIES - 1) {
+            if (!isTransientStatus(response.status) || attempt === OPENAI_REQUEST_RETRIES - 1) {
                 return response;
             }
 
             await response.arrayBuffer().catch(() => undefined);
         } catch (error) {
             lastError = error;
-            if (attempt === XAI_REQUEST_RETRIES - 1) {
+            if (attempt === OPENAI_REQUEST_RETRIES - 1) {
                 throw error;
             }
         }

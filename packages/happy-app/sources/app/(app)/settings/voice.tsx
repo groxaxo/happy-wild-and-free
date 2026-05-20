@@ -123,7 +123,7 @@ export default React.memo(function VoiceSettingsScreen() {
     const handleVoiceTtsProvider = React.useCallback(() => {
         Modal.alert(
             'Speech Provider',
-            'Choose the text-to-speech backend for local web voice playback.\nOpenAI-compatible endpoints are supported for all options.',
+            'Choose the text-to-speech backend for local web voice playback. OpenAI, Chatterbox, and NeuTTS use OpenAI-compatible endpoints; xAI uses its own API.',
             [
                 { text: VOICE_TTS_PROVIDER_LABELS.openai, onPress: () => setVoiceTtsProvider('openai') },
                 { text: VOICE_TTS_PROVIDER_LABELS.xai, onPress: () => setVoiceTtsProvider('xai') },
