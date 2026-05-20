@@ -190,10 +190,10 @@ if (typeof window !== 'undefined' && typeof globalThis.crypto !== 'undefined' &&
         /* -- stubs for rarely-used methods ----------------------------- */
         async sign():         Promise<ArrayBuffer> { throw new DOMException('polyfill: sign not implemented', 'NotSupportedError'); },
         async verify():       Promise<boolean>     { throw new DOMException('polyfill: verify not implemented', 'NotSupportedError'); },
-        async generateKey():  Promise<CryptoKey | CryptoKeyPair> { throw new DOMException('polyfill: generateKey not implemented', 'NotSupportedError'); },
+        async generateKey():  Promise<never> { throw new DOMException('polyfill: generateKey not implemented', 'NotSupportedError'); },
         async deriveKey():    Promise<CryptoKey>   { throw new DOMException('polyfill: deriveKey not implemented', 'NotSupportedError'); },
         async deriveBits():   Promise<ArrayBuffer> { throw new DOMException('polyfill: deriveBits not implemented', 'NotSupportedError'); },
-        async exportKey():    Promise<ArrayBuffer | JsonWebKey> { throw new DOMException('polyfill: exportKey not implemented', 'NotSupportedError'); },
+        async exportKey():    Promise<never> { throw new DOMException('polyfill: exportKey not implemented', 'NotSupportedError'); },
         async wrapKey():      Promise<ArrayBuffer> { throw new DOMException('polyfill: wrapKey not implemented', 'NotSupportedError'); },
         async unwrapKey():    Promise<CryptoKey>   { throw new DOMException('polyfill: unwrapKey not implemented', 'NotSupportedError'); },
     };
