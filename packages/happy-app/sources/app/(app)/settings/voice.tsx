@@ -364,26 +364,26 @@ export default React.memo(function VoiceSettingsScreen() {
             {localVoiceEnabled && (
                 <ItemGroup
                     title="Direct Endpoints"
-                    footer="Override the LLM, ASR, and TTS URLs and API keys used by local web voice. These are stored on this device only. Leave a field blank to fall back to env-var or built-in defaults."
+                    footer="Set per-device LLM and ASR overrides for local web voice. The LLM URL also drives the OpenAI-compatible TTS provider when no separate EXPO_PUBLIC_OPENAI_API_BASE_URL is configured. xAI, Chatterbox, and NeuTTS use their own built-in defaults. Blank = fall back to env var or built-in default."
                 >
                     <Item
                         title="LLM URL"
-                        subtitle="Base URL for chat completions"
-                        detail={endpointConfig.llmUrl ?? 'default'}
+                        subtitle="Base URL for chat completions and OpenAI-compatible TTS"
+                        detail={endpointConfig.llmUrl ?? 'env / default'}
                         icon={<Ionicons name="globe-outline" size={29} color="#007AFF" />}
                         onPress={handleEditLlmUrl}
                     />
                     <Item
                         title="LLM API Key"
-                        subtitle="Bearer token for the LLM endpoint"
-                        detail={endpointConfig.llmApiKey ? '••••••••' : 'not set'}
+                        subtitle="Bearer token for the LLM and OpenAI-compatible TTS endpoint"
+                        detail={endpointConfig.llmApiKey ? '••••••••' : 'env / none'}
                         icon={<Ionicons name="key-outline" size={29} color="#FF9500" />}
                         onPress={handleEditLlmApiKey}
                     />
                     <Item
                         title="LLM Model"
                         subtitle="Model name sent in /chat/completions"
-                        detail={endpointConfig.llmModel ?? 'default'}
+                        detail={endpointConfig.llmModel ?? 'env / default'}
                         icon={<Ionicons name="hardware-chip-outline" size={29} color="#5856D6" />}
                         onPress={handleEditLlmModel}
                     />

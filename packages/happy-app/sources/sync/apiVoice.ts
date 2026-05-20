@@ -174,11 +174,19 @@ function getLocalLlmBusyRetries(): number {
 }
 
 function getOpenAiApiBaseUrl(): string {
-    return stripTrailingSlash(readOptionalStringConfig('openAiApiBaseUrl', 'EXPO_PUBLIC_OPENAI_API_BASE_URL') || DEFAULT_OPENAI_API_BASE_URL);
+    // Priority: __HAPPY_CONFIG__ / EXPO_PUBLIC_OPENAI_API_BASE_URL  →  MMKV LLM URL
+    // (lets a single local server URL cover both chat and openai-compatible TTS/ASR)
+    // →  cloud default.
+    return stripTrailingSlash(
+        readOptionalStringConfig('openAiApiBaseUrl', 'EXPO_PUBLIC_OPENAI_API_BASE_URL')
+        || getLocalVoiceLlmUrl()
+        || DEFAULT_OPENAI_API_BASE_URL,
+    );
 }
 
 function getOpenAiApiKey(): string | null {
-    return readOptionalStringConfig('openAiApiKey', 'EXPO_PUBLIC_OPENAI_API_KEY');
+    return readOptionalStringConfig('openAiApiKey', 'EXPO_PUBLIC_OPENAI_API_KEY')
+        || getLocalVoiceLlmApiKey();
 }
 
 function getOpenAiTtsModel(): string {
