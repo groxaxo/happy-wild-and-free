@@ -19,6 +19,15 @@ import { trackPaywallButtonClicked } from '@/track';
 import { getVoiceExperimentStatus, getVoiceUpsellVariantLabel } from '@/realtime/voiceExperiment';
 import { getVoiceLocalCounters, resetVoiceLocalCounters } from '@/sync/persistence';
 import { config } from '@/config';
+import {
+    getLocalVoiceConfigSnapshot,
+    setLocalVoiceLlmUrl,
+    setLocalVoiceLlmApiKey,
+    setLocalVoiceLlmModel,
+    setLocalVoiceAsrUrl,
+    setLocalVoiceAsrApiKey,
+    type LocalVoiceConfigSnapshot,
+} from '@/sync/localVoiceConfig';
 import type { VoiceAsrProvider, VoiceSpeechProvider } from '@slopus/happy-wire';
 
 const VOICE_TTS_PROVIDER_LABELS: Record<VoiceSpeechProvider, string> = {
@@ -51,6 +60,10 @@ export default React.memo(function VoiceSettingsScreen() {
     const experiments = useSetting('experiments');
     const devModeEnabled = __DEV__ || useLocalSetting('devModeEnabled');
     const localVoiceEnabled = config.localVoiceEnabled ?? false;
+
+    const [endpointConfig, setEndpointConfig] = React.useState<LocalVoiceConfigSnapshot>(
+        () => getLocalVoiceConfigSnapshot()
+    );
 
     const hasPro = useEntitlement('pro');
 
@@ -133,6 +146,66 @@ export default React.memo(function VoiceSettingsScreen() {
             ],
         );
     }, [setVoiceTtsProvider]);
+
+    const handleEditLlmUrl = React.useCallback(async () => {
+        const value = await Modal.prompt(
+            'LLM Base URL',
+            'OpenAI-compatible base URL used for chat completions (and TTS/ASR when no separate URL is set).\nExample: http://127.0.0.1:12434/v1',
+            { defaultValue: endpointConfig.llmUrl ?? '', placeholder: 'http://127.0.0.1:12434/v1' },
+        );
+        if (value !== null) {
+            setLocalVoiceLlmUrl(value || null);
+            setEndpointConfig(getLocalVoiceConfigSnapshot());
+        }
+    }, [endpointConfig.llmUrl]);
+
+    const handleEditLlmApiKey = React.useCallback(async () => {
+        const value = await Modal.prompt(
+            'LLM API Key',
+            'Optional Bearer token for the LLM endpoint. Leave blank if the server requires no auth.',
+            { defaultValue: endpointConfig.llmApiKey ?? '', placeholder: 'sk-…' },
+        );
+        if (value !== null) {
+            setLocalVoiceLlmApiKey(value || null);
+            setEndpointConfig(getLocalVoiceConfigSnapshot());
+        }
+    }, [endpointConfig.llmApiKey]);
+
+    const handleEditLlmModel = React.useCallback(async () => {
+        const value = await Modal.prompt(
+            'LLM Model',
+            'Model name sent in the /chat/completions body.',
+            { defaultValue: endpointConfig.llmModel ?? '', placeholder: 'qwen2.5-14b-instruct' },
+        );
+        if (value !== null) {
+            setLocalVoiceLlmModel(value || null);
+            setEndpointConfig(getLocalVoiceConfigSnapshot());
+        }
+    }, [endpointConfig.llmModel]);
+
+    const handleEditAsrUrl = React.useCallback(async () => {
+        const value = await Modal.prompt(
+            'ASR Base URL',
+            'Base URL for /audio/transcriptions. Leave blank to share the LLM URL.',
+            { defaultValue: endpointConfig.asrUrl ?? '', placeholder: 'http://127.0.0.1:5092/v1' },
+        );
+        if (value !== null) {
+            setLocalVoiceAsrUrl(value || null);
+            setEndpointConfig(getLocalVoiceConfigSnapshot());
+        }
+    }, [endpointConfig.asrUrl]);
+
+    const handleEditAsrApiKey = React.useCallback(async () => {
+        const value = await Modal.prompt(
+            'ASR API Key',
+            'Optional Bearer token for the ASR endpoint. Leave blank to share the LLM key.',
+            { defaultValue: endpointConfig.asrApiKey ?? '', placeholder: 'sk-…' },
+        );
+        if (value !== null) {
+            setLocalVoiceAsrApiKey(value || null);
+            setEndpointConfig(getLocalVoiceConfigSnapshot());
+        }
+    }, [endpointConfig.asrApiKey]);
 
     const handleResetVoiceCounters = React.useCallback(async () => {
         const confirmed = await Modal.confirm(
@@ -284,6 +357,49 @@ export default React.memo(function VoiceSettingsScreen() {
                         detail={VOICE_TTS_PROVIDER_LABELS[voiceTtsProvider] ?? voiceTtsProvider}
                         icon={<Ionicons name="volume-high-outline" size={29} color="#34C759" />}
                         onPress={handleVoiceTtsProvider}
+                    />
+                </ItemGroup>
+            )}
+
+            {localVoiceEnabled && (
+                <ItemGroup
+                    title="Direct Endpoints"
+                    footer="Override the LLM, ASR, and TTS URLs and API keys used by local web voice. These are stored on this device only. Leave a field blank to fall back to env-var or built-in defaults."
+                >
+                    <Item
+                        title="LLM URL"
+                        subtitle="Base URL for chat completions"
+                        detail={endpointConfig.llmUrl ?? 'default'}
+                        icon={<Ionicons name="globe-outline" size={29} color="#007AFF" />}
+                        onPress={handleEditLlmUrl}
+                    />
+                    <Item
+                        title="LLM API Key"
+                        subtitle="Bearer token for the LLM endpoint"
+                        detail={endpointConfig.llmApiKey ? '••••••••' : 'not set'}
+                        icon={<Ionicons name="key-outline" size={29} color="#FF9500" />}
+                        onPress={handleEditLlmApiKey}
+                    />
+                    <Item
+                        title="LLM Model"
+                        subtitle="Model name sent in /chat/completions"
+                        detail={endpointConfig.llmModel ?? 'default'}
+                        icon={<Ionicons name="hardware-chip-outline" size={29} color="#5856D6" />}
+                        onPress={handleEditLlmModel}
+                    />
+                    <Item
+                        title="ASR URL"
+                        subtitle="Base URL for /audio/transcriptions — blank = LLM URL"
+                        detail={endpointConfig.asrUrl ?? 'same as LLM'}
+                        icon={<Ionicons name="mic-circle-outline" size={29} color="#34C759" />}
+                        onPress={handleEditAsrUrl}
+                    />
+                    <Item
+                        title="ASR API Key"
+                        subtitle="Bearer token for the ASR endpoint — blank = LLM key"
+                        detail={endpointConfig.asrApiKey ? '••••••••' : 'same as LLM'}
+                        icon={<Ionicons name="lock-closed-outline" size={29} color="#FF2D55" />}
+                        onPress={handleEditAsrApiKey}
                     />
                 </ItemGroup>
             )}

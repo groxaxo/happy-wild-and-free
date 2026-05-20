@@ -19,6 +19,13 @@ import { AuthCredentials } from '@/auth/tokenStorage';
 import { getServerUrl } from './serverConfig';
 import { getHappyClientId } from './apiSocket';
 import { config } from '@/config';
+import {
+    getLocalVoiceLlmUrl,
+    getLocalVoiceLlmApiKey,
+    getLocalVoiceLlmModel,
+    getLocalVoiceAsrUrl,
+    getLocalVoiceAsrApiKey,
+} from './localVoiceConfig';
 
 const LOCAL_VOICE_PROXY_HOST = '127.0.0.1';
 const DEFAULT_OPENAI_API_BASE_URL = 'https://api.openai.com/v1';
@@ -137,21 +144,24 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 
 function getLocalLlmBaseUrl(): string {
     return stripTrailingSlash(
-        readOptionalStringConfig('localLlmBaseUrl', 'EXPO_PUBLIC_LOCAL_LLM_BASE_URL')
+        getLocalVoiceLlmUrl()
+        || readOptionalStringConfig('localLlmBaseUrl', 'EXPO_PUBLIC_LOCAL_LLM_BASE_URL')
         || readOptionalStringConfig('openAiApiBaseUrl', 'EXPO_PUBLIC_OPENAI_API_BASE_URL')
         || DEFAULT_LOCAL_LLM_BASE_URL,
     );
 }
 
 function getLocalLlmModel(): string {
-    return readOptionalStringConfig('localLlmModel', 'EXPO_PUBLIC_LOCAL_LLM_MODEL')
+    return getLocalVoiceLlmModel()
+        || readOptionalStringConfig('localLlmModel', 'EXPO_PUBLIC_LOCAL_LLM_MODEL')
         || readOptionalStringConfig('openAiResponsesModel', 'EXPO_PUBLIC_OPENAI_RESPONSES_MODEL')
         || DEFAULT_LOCAL_LLM_MODEL
         || DEFAULT_OPENAI_RESPONSES_MODEL;
 }
 
 function getLocalLlmApiKey(): string | null {
-    return readOptionalStringConfig('localLlmApiKey', 'EXPO_PUBLIC_LOCAL_LLM_API_KEY')
+    return getLocalVoiceLlmApiKey()
+        || readOptionalStringConfig('localLlmApiKey', 'EXPO_PUBLIC_LOCAL_LLM_API_KEY')
         || readOptionalStringConfig('openAiApiKey', 'EXPO_PUBLIC_OPENAI_API_KEY');
 }
 
@@ -185,7 +195,9 @@ function getOpenAiTtsResponseFormat(): string {
 
 function getLocalAsrBaseUrl(): string {
     return stripTrailingSlash(
-        readOptionalStringConfig('localAsrBaseUrl', 'EXPO_PUBLIC_LOCAL_ASR_BASE_URL')
+        getLocalVoiceAsrUrl()
+        || getLocalVoiceLlmUrl()
+        || readOptionalStringConfig('localAsrBaseUrl', 'EXPO_PUBLIC_LOCAL_ASR_BASE_URL')
         || readOptionalStringConfig('openAiApiBaseUrl', 'EXPO_PUBLIC_OPENAI_API_BASE_URL')
         || DEFAULT_LOCAL_ASR_BASE_URL,
     );
@@ -196,7 +208,10 @@ function getLocalAsrModel(): string {
 }
 
 function getLocalAsrApiKey(): string | null {
-    return readOptionalStringConfig('localAsrApiKey', 'EXPO_PUBLIC_LOCAL_ASR_API_KEY') || getOpenAiApiKey();
+    return getLocalVoiceAsrApiKey()
+        || getLocalVoiceLlmApiKey()
+        || readOptionalStringConfig('localAsrApiKey', 'EXPO_PUBLIC_LOCAL_ASR_API_KEY')
+        || getOpenAiApiKey();
 }
 
 function getLocalAsrRequestTimeoutMs(): number {
